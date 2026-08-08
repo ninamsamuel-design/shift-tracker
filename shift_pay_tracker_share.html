@@ -1,0 +1,1065 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Shift Pay Tracker</title>
+<style>
+  :root {
+    --ink: #0E2420;
+    --ink-soft: #4E6560;
+    --paper: #F6F7F4;
+    --card: #FFFFFF;
+    --line: #DDE3DF;
+    --pulse: #0FA37F;
+    --pulse-soft: #E4F5EF;
+    --amber: #C97A2B;
+    --amber-soft: #FBF0E2;
+    --danger: #B5473A;
+    --mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+    --sans: 'IBM Plex Sans', -apple-system, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--paper); }
+  body {
+    font-family: var(--sans);
+    color: var(--ink);
+  }
+  #app {
+    min-height: 100%;
+    padding: 28px 20px 24px;
+    max-width: 760px;
+    margin: 0 auto;
+  }
+  .masthead { margin-bottom: 22px; }
+  .masthead .kicker {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--pulse);
+    margin-bottom: 6px;
+  }
+  .masthead h1 { font-size: 26px; margin: 0 0 4px; font-weight: 650; letter-spacing: -0.01em; }
+  .masthead p { margin: 0; color: var(--ink-soft); font-size: 13.5px; }
+  .trace { width: 100%; height: 22px; margin: 14px 0 4px; display: block; }
+
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 18px 20px;
+    margin-bottom: 16px;
+  }
+  .card h2 {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.09em;
+    color: var(--ink-soft);
+    margin: 0 0 14px;
+    font-weight: 600;
+  }
+  .card-head { display: flex; justify-content: space-between; align-items: center; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; }
+  label { display: block; font-size: 12.5px; color: var(--ink-soft); margin-bottom: 4px; }
+  input, select {
+    width: 100%;
+    font-family: var(--sans);
+    font-size: 14px;
+    padding: 9px 10px;
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    background: #FCFDFC;
+    color: var(--ink);
+  }
+  input:focus, select:focus { outline: 2px solid var(--pulse); outline-offset: 1px; border-color: var(--pulse); }
+  .time-invalid { border-color: var(--danger) !important; background: #FBE7E4; }
+  .field { margin-bottom: 12px; }
+  .row-actions { display: flex; gap: 10px; margin-top: 4px; }
+  button {
+    font-family: var(--sans);
+    font-size: 13.5px;
+    font-weight: 600;
+    border-radius: 7px;
+    padding: 10px 16px;
+    border: 1px solid transparent;
+    cursor: pointer;
+  }
+  .btn-primary { background: var(--ink); color: #fff; transition: background 0.15s; }
+  .btn-primary.btn-confirmed { background: var(--pulse); }
+  .btn-primary:hover { background: #1a3a34; }
+  .settings-toggle { font-family: var(--mono); font-size: 11.5px; color: var(--ink-soft); background: none; border: none; cursor: pointer; text-decoration: underline; padding: 0; }
+
+  .type-note { font-size: 12px; color: var(--ink-soft); margin-top: -6px; margin-bottom: 12px; line-height: 1.5; }
+
+  .week-block { margin-bottom: 14px; }
+  .week-header {
+    display: flex; justify-content: space-between; align-items: baseline;
+    padding: 10px 4px 8px;
+    border-bottom: 1px solid var(--line);
+    margin-bottom: 8px;
+  }
+  .week-header .label { font-family: var(--mono); font-size: 12px; color: var(--ink-soft); }
+  .week-header .total { font-family: var(--mono); font-size: 16px; font-weight: 600; }
+
+  .entry {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 9px 4px; border-bottom: 1px dashed var(--line);
+    font-size: 13.5px;
+  }
+  .entry:last-child { border-bottom: none; }
+  .entry .meta { color: var(--ink-soft); font-size: 12px; margin-top: 4px; }
+  .entry .right { display: flex; align-items: center; }
+  .entry .amt { font-family: var(--mono); font-weight: 600; white-space: nowrap; margin-left: 10px; }
+  .tag {
+    display: inline-block; font-family: var(--mono); font-size: 10px; letter-spacing: 0.04em;
+    padding: 2px 6px; border-radius: 4px; margin-right: 6px; margin-top: 4px; text-transform: uppercase;
+  }
+  .tag-reg { background: var(--pulse-soft); color: var(--pulse); }
+  .tag-ot { background: var(--amber-soft); color: var(--amber); }
+  .tag-dt { background: #FBE7E4; color: var(--danger); }
+  .tag-oncall { background: #EFEFEF; color: var(--ink-soft); }
+  .tag-diff { background: #EFEFEF; color: var(--ink-soft); }
+
+  .del { background: none; border: none; color: var(--ink-soft); font-size: 18px; cursor: pointer; padding: 6px 10px; line-height: 1; }
+  .edit { background: none; border: none; color: var(--ink-soft); font-size: 20px; cursor: pointer; padding: 6px 10px; line-height: 1; }
+  .edit:hover { color: var(--pulse); }
+  .entry-editing { background: var(--pulse-soft); border-radius: 6px; margin: 0 -6px; padding-left: 6px; padding-right: 6px; }
+  .del:hover { color: var(--danger); }
+
+  .empty { text-align: center; padding: 30px 10px; color: var(--ink-soft); font-size: 13.5px; }
+
+  @media (max-width: 480px) {
+    .grid2 { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <div style="background:#FBF0E2; border:1px solid #C97A2B; border-radius:8px; padding:10px 14px; margin-bottom:18px; display:flex; align-items:center; gap:10px;">
+    <span style="font-family:var(--mono); font-size:10.5px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; background:#C97A2B; color:#fff; padding:3px 8px; border-radius:4px; white-space:nowrap;">Test version</span>
+    <span style="font-size:12.5px; color:#7a4d1a;">This is a beta rollout for feedback — not an official payroll tool. Spot something off? Let me know.</span>
+  </div>
+
+  <div class="masthead">
+    <div class="kicker">Personal pay verification</div>
+    <h1>Shift Pay Tracker</h1>
+    <p>Log your actual hours by category — compare the total against what shows up on your paycheck.</p>
+    <svg class="trace" viewBox="0 0 400 22" preserveAspectRatio="none">
+      <polyline points="0,11 120,11 135,11 145,2 155,20 165,4 175,11 400,11"
+        fill="none" stroke="#0FA37F" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" opacity="0.55" />
+    </svg>
+  </div>
+
+  <div id="saveStatus" style="font-size:12.5px; color:var(--amber); margin-bottom:14px;"></div>
+
+  <div class="card">
+    <h2>Backup / restore</h2>
+    <p class="type-note" style="margin-top:0;">Your rates and entries save automatically as you go. If this browser doesn't reliably keep data between visits (common when opening the file directly instead of through a server), download a backup here and load it back in next time.</p>
+    <div class="row-actions">
+      <button class="btn-ghost" id="exportBtn">Download backup</button>
+      <label class="btn-ghost" style="display:inline-flex; align-items:center; cursor:pointer;">
+        Restore from file
+        <input type="file" id="importFile" accept=".json" style="display:none;">
+      </label>
+      <button class="btn-ghost" id="clearDataBtn" style="color:var(--danger); border-color:var(--danger);">Clear all data</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head" id="settingsHead">
+      <h2 style="margin:0;">Pay rules</h2>
+      <button class="settings-toggle" id="settingsToggle">edit rates</button>
+    </div>
+    <div class="grid2" id="settingsPanel" style="display:none; margin-top:14px;">
+      <div class="field">
+        <label>Base hourly rate</label>
+        <input type="number" step="0.01" id="baseRate">
+      </div>
+      <div class="field">
+        <label>On-call standby rate ($/hr)</label>
+        <input type="number" step="0.01" id="onCallRate">
+      </div>
+      <div class="field">
+        <label>Evening differential ($/hr)</label>
+        <input type="number" step="0.01" id="eveningDiff">
+      </div>
+      <div class="field">
+        <label>Night differential ($/hr)</label>
+        <input type="number" step="0.01" id="nightDiff">
+      </div>
+      <div class="field">
+        <label>Weekend differential ($/hr)</label>
+        <input type="number" step="0.01" id="weekendDiff">
+      </div>
+      <div class="field">
+        <label>Call-in minimum (hrs)</label>
+        <input type="number" step="0.5" id="callbackMinHours">
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2 id="formHeading">Log an entry</h2>
+    <div class="grid2">
+      <div class="field">
+        <label>Date</label>
+        <input type="date" id="entryDate">
+      </div>
+      <div class="field">
+        <label>Type</label>
+        <select id="entryType">
+          <option value="shift">Scheduled shift</option>
+          <option value="training">Training / orientation</option>
+          <option value="extra_shift">Extra shift (ESIP, 1.5x bonus)</option>
+          <option value="holiday">Holiday pay</option>
+          <option value="comp_used">Compensatory time used</option>
+          <option value="callback">Called-in</option>
+          <option value="callback_1hr">Call-back within 1 hr of clock-out</option>
+          <option value="callback_cancelled">Call-back, case cancelled</option>
+          <option value="oncall">On-call standby</option>
+        </select>
+      </div>
+    </div>
+    <p class="type-note" id="typeNote"></p>
+    <div class="field" id="mealField" style="display:none;">
+      <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+        <input type="checkbox" id="entryMealSkipped" style="width:auto;">
+        Meal break skipped this shift? (counts full hours + adds 1h missed-meal penalty pay)
+      </label>
+    </div>
+    <div class="field" id="restField" style="display:none;">
+      <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+        <input type="checkbox" id="entryRest" style="width:auto;">
+        Less than 6 hours of sleep? Click here for 1.5x. Note: ticket will need to be filed with HTS for it to show on your paycheck, file a note on HealthTime.
+      </label>
+    </div>
+    <div class="grid2" id="timeFields">
+      <div class="field">
+        <label>Start time</label>
+        <input type="text" id="entryStart" inputmode="numeric" placeholder="HH:MM" maxlength="5">
+      </div>
+      <div class="field">
+        <label>End time</label>
+        <input type="text" id="entryEnd" inputmode="numeric" placeholder="HH:MM" maxlength="5">
+      </div>
+    </div>
+    <div class="grid2">
+      <div class="field">
+        <label id="hoursLabel">Hours (auto-filled: clock time minus 30-min meal)</label>
+        <input type="number" step="0.25" id="entryHours" value="12">
+      </div>
+      <div class="field" id="diffField">
+        <label>Shift differential</label>
+        <select id="entryDiff">
+          <option value="auto">Auto (from start/end time)</option>
+          <option value="none">None</option>
+          <option value="evening">Evening</option>
+          <option value="night">Night</option>
+          <option value="weekend">Weekend</option>
+        </select>
+      </div>
+    </div>
+    <div class="row-actions">
+      <button class="btn-primary" id="addBtn">Add entry</button>
+      <button class="btn-ghost" id="cancelEditBtn" style="display:none;">Cancel</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Weekly totals</h2>
+    <div id="weeksContainer"></div>
+  </div>
+
+  <div class="card">
+    <h2>Verify against paystub — expected totals</h2>
+    <p class="type-note" style="margin-top:0;">Pick a pay period to see what the tracker expects for each pay category, so you can compare it against your actual paystub by eye.</p>
+    <div class="grid2">
+      <div class="field">
+        <label>Pay period start</label>
+        <input type="date" id="verifyStart">
+      </div>
+      <div class="field">
+        <label>Pay period end</label>
+        <input type="date" id="verifyEnd">
+      </div>
+    </div>
+    <div id="expectedSummary"></div>
+    <p class="type-note" style="margin-top:14px; color:#C97A2B;">The automatic photo/PDF paystub checker isn't included in this shared copy — it only works inside a live Claude conversation. If you'd like a paystub double-checked, ask whoever shared this file with you, or paste your paystub into a Claude chat directly.</p>
+  </div>
+
+</div>
+
+<script>
+const DEFAULT_SETTINGS = { baseRate: 45, eveningDiff: 3.25, nightDiff: 5.00, weekendDiff: 3.80, onCallRate: 20, callbackMinHours: 2 };
+
+const TYPE_INFO = {
+  shift: { label: "Scheduled shift", note: "Regular worked shift. Hours past 12 in this entry go to double time (2x); cumulative regular hours past 40 for the week go to 1.5x." },
+  training: { label: "Training / orientation", note: "Paid at your regular rate. Does not count toward daily or weekly OT accrual (educational/orientation time is excluded from overtime calculations)." },
+  extra_shift: { label: "Extra shift (ESIP, 1.5x bonus)", note: "" },
+  holiday: { label: "Holiday pay", note: "Paid at your regular rate. Doesn't count toward OT accrual \u2014 the contract excludes holiday pay from hours worked for overtime purposes." },
+  comp_used: { label: "Compensatory time used", note: "Paid out at your regular rate for this period. Doesn't count toward OT accrual (it's paid leave, not worked time)." },
+  callback: { label: "Called-in", note: "Paid at 1.5x, for actual hours worked or the 2-hour minimum \u2014 whichever is greater. Confirmed by payroll (ticket opened after an earlier straight-time explanation turned out to be wrong). If this overlaps an existing on-call standby entry, that standby entry auto-splits around it so the overnight total stays accurate." },
+  callback_1hr: { label: "Call-back within 1 hr of clock-out", note: "Goes straight to double time (2x) for all hours." },
+  callback_cancelled: { label: "Call-back, case cancelled", note: "Flat payout: straight time for the 2-hour minimum, regardless of hours entered." },
+  oncall: { label: "On-call standby", note: "Paid at the flat on-call rate; doesn't count toward OT. Log from your actual clock-out time. If you're called in with no break, log that portion as a shift/recall entry instead." },
+};
+
+const storageAdapter = {
+  lastSaveFailed: false,
+  async get(key) {
+    if (window.storage && typeof window.storage.get === "function") {
+      try { return await window.storage.get(key); } catch (e) { return null; }
+    }
+    try {
+      const v = localStorage.getItem("shift_tracker_" + key);
+      return v !== null ? { value: v } : null;
+    } catch (e) { return null; }
+  },
+  async set(key, value) {
+    if (window.storage && typeof window.storage.set === "function") {
+      try { await window.storage.set(key, value); this.lastSaveFailed = false; return; } catch (e) { /* fall through */ }
+    }
+    try {
+      localStorage.setItem("shift_tracker_" + key, value);
+      this.lastSaveFailed = false;
+    } catch (e) {
+      this.lastSaveFailed = true;
+    }
+    updateSaveStatus();
+  }
+};
+
+function updateSaveStatus() {
+  const el = document.getElementById("saveStatus");
+  if (!el) return;
+  el.textContent = storageAdapter.lastSaveFailed
+    ? "⚠ This browser isn't saving data between visits — use Backup / Restore below so you don't lose your settings or entries."
+    : "";
+}
+
+let settings = { ...DEFAULT_SETTINGS };
+let entries = [];
+let editingId = null;
+
+function uid() { return Math.random().toString(36).slice(2, 10); }
+function money(n) { return n.toLocaleString(undefined, { style: "currency", currency: "USD" }); }
+function localDateStr(d) {
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+}
+function getWeekStart(dateStr) {
+  const d = new Date(dateStr + "T00:00:00");
+  const day = d.getDay();
+  d.setDate(d.getDate() - day);
+  return localDateStr(d);
+}
+function fmtWeek(startStr) {
+  const start = new Date(startStr + "T00:00:00");
+  const end = new Date(start); end.setDate(end.getDate() + 6);
+  const opts = { month: "short", day: "numeric" };
+  return start.toLocaleDateString(undefined, opts) + " – " + end.toLocaleDateString(undefined, opts);
+}
+
+function timeToMin(t) { const [h, m] = t.split(":").map(Number); return h * 60 + m; }
+
+function isValidTimeStr(t) {
+  return /^([01][0-9]|2[0-3]):[0-5][0-9]$/.test(t);
+}
+
+// Auto-formats free-typed digits into HH:MM as the user types (e.g. "1930" -> "19:30").
+function attachTimeAutoFormat(inputEl) {
+  inputEl.addEventListener("input", () => {
+    let digits = inputEl.value.replace(/\D/g, "").slice(0, 4);
+    let formatted = digits;
+    if (digits.length >= 3) formatted = digits.slice(0, 2) + ":" + digits.slice(2);
+    inputEl.value = formatted;
+    inputEl.classList.remove("time-invalid");
+  });
+  inputEl.addEventListener("blur", () => {
+    if (inputEl.value && !isValidTimeStr(inputEl.value)) {
+      inputEl.classList.add("time-invalid");
+    } else {
+      inputEl.classList.remove("time-invalid");
+    }
+  });
+}
+
+function roundToQuarterHour(mins) { return Math.round(mins / 15) * 15; }
+
+function roundQuarter(n) { return Math.round(n * 4) / 4; }
+
+function standardMealDeduction(rawHours) {
+  return rawHours > 5 ? 0.5 : 0;
+}
+
+function roundedTimeStr(t) {
+  const mins = roundToQuarterHour(timeToMin(t));
+  const h = Math.floor(mins / 60) % 24;
+  const m = mins % 60;
+  return String(h).padStart(2, "0") + ":" + String(m).padStart(2, "0");
+}
+
+function entryRangeMs(dateStr, startTime, endTime) {
+  if (!startTime || !endTime) return null;
+  const startStr = roundedTimeStr(startTime);
+  const endStr = roundedTimeStr(endTime);
+  let start = new Date(dateStr + "T" + startStr + ":00").getTime();
+  let end = new Date(dateStr + "T" + endStr + ":00").getTime();
+  if (end <= start) end += 24 * 3600 * 1000;
+  return { start, end };
+}
+
+function fmtDateFromMs(ms) {
+  const d = new Date(ms);
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+}
+function fmtTimeFromMs(ms) {
+  const d = new Date(ms);
+  return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+}
+
+function makeStandbyFragment(startMs, endMs) {
+  const hours = roundQuarter((endMs - startMs) / 3600000);
+  return {
+    id: uid(), date: fmtDateFromMs(startMs), type: "oncall", hours,
+    diffMode: "none", startTime: fmtTimeFromMs(startMs), endTime: fmtTimeFromMs(endMs),
+    restViolation: false,
+  };
+}
+
+// If a new call-in overlaps an existing on-call standby entry, trim/split the
+// standby entry around the call-in window so the overnight total stays
+// accurate instead of double-counting the call-in hours as also standby.
+function splitStandbyForCallback(cbRange) {
+  if (!cbRange) return;
+  const toRemove = [];
+  const toAdd = [];
+  entries.forEach(e => {
+    if (e.type !== "oncall") return;
+    const osRange = entryRangeMs(e.date, e.startTime, e.endTime);
+    if (!osRange) return;
+    const overlapStart = Math.max(osRange.start, cbRange.start);
+    const overlapEnd = Math.min(osRange.end, cbRange.end);
+    if (overlapStart >= overlapEnd) return;
+    toRemove.push(e.id);
+    if (osRange.start < cbRange.start) toAdd.push(makeStandbyFragment(osRange.start, cbRange.start));
+    if (cbRange.end < osRange.end) toAdd.push(makeStandbyFragment(cbRange.end, osRange.end));
+  });
+  if (toRemove.length === 0) return;
+  entries = entries.filter(e => !toRemove.includes(e.id)).concat(toAdd);
+}
+
+function autoCalcHours() {
+  const type = document.getElementById("entryType").value;
+  if (type === "callback_cancelled") return;
+  const startStr = document.getElementById("entryStart").value;
+  const endStr = document.getElementById("entryEnd").value;
+  if (!startStr || !endStr) return;
+  if (!isValidTimeStr(startStr) || !isValidTimeStr(endStr)) return;
+  let start = roundToQuarterHour(timeToMin(startStr));
+  let end = roundToQuarterHour(timeToMin(endStr));
+  if (end <= start) end += 1440;
+  const rawHours = (end - start) / 60;
+  const skipMealDeduction = type === "oncall" || document.getElementById("entryMealSkipped").checked;
+  const netHours = skipMealDeduction ? rawHours : rawHours - standardMealDeduction(rawHours);
+  document.getElementById("entryHours").value = roundQuarter(netHours);
+}
+
+function autoDetectDifferential(dateStr, startStr, endStr) {
+  let start = roundToQuarterHour(timeToMin(startStr));
+  let end = roundToQuarterHour(timeToMin(endStr));
+  if (end <= start) end += 1440;
+  const ov = (aS, aE, bS, bE) => Math.max(0, Math.min(aE, bE) - Math.max(aS, bS));
+  const eveningHrs = ov(start, end, 1020, 1440) / 60;
+  const nightHrs = (ov(start, end, 0, 480) + ov(start, end, 1440, 1920)) / 60;
+  const dow0 = new Date(dateStr + "T00:00:00").getDay();
+  const dow1 = end > 1440 ? (dow0 + 1) % 7 : null;
+  const isWeekend = (dow0 === 0 || dow0 === 6) || (dow1 !== null && (dow1 === 0 || dow1 === 6));
+  if (isWeekend) return "weekend";
+  if (nightHrs >= 4) return "night";
+  if (eveningHrs >= 4) return "evening";
+  return "none";
+}
+
+function resolveDifferential(entry) {
+  const mode = entry.diffMode || "none";
+  if (mode === "none") return "none";
+  if (mode !== "auto") return mode;
+  if (!entry.startTime || !entry.endTime) return "none";
+  return autoDetectDifferential(entry.date, entry.startTime, entry.endTime);
+}
+
+function diffRate(entry) {
+  const type = resolveDifferential(entry);
+  if (type === "none") return 0;
+  if (type === "evening") return settings.eveningDiff;
+  if (type === "night") return settings.nightDiff;
+  if (type === "weekend") return settings.weekendDiff;
+  return 0;
+}
+function diffLabel(entry) {
+  const type = resolveDifferential(entry);
+  if (type === "none") return "";
+  const label = type.charAt(0).toUpperCase() + type.slice(1);
+  return entry.diffMode === "auto" ? label + " (auto)" : label;
+}
+
+function computeEntry(entry, priorRegularHours) {
+  const base = computeEntryBase(entry, priorRegularHours);
+  if (entry.mealSkipped) {
+    const rate = settings.baseRate + diffRate(entry);
+    const penalty = rate * 1;
+    base.pay += penalty;
+    base.lines.push({ tag: "reg", label: "1h missed-meal penalty", amt: penalty });
+  }
+  return base;
+}
+
+function computeEntryBase(entry, priorRegularHours) {
+  const rate = settings.baseRate + diffRate(entry);
+  const otRate = rate * 1.5;
+  const dtRate = rate * 2;
+
+  if (entry.type === "extra_shift") {
+    // Best-guess model, unconfirmed: flat 1.5x total (per charge nurse's
+    // verbal offer), shown split as regular + ESIP/LSN premium since that's
+    // the pattern every other premium code follows on the real stubs.
+    const pay = entry.hours * otRate;
+    const regPortion = entry.hours * rate;
+    const esipPortion = pay - regPortion;
+    return { pay, regularHoursAdded: entry.hours, lines: [
+      { tag: "reg", label: entry.hours + "h regular (extra shift)", amt: regPortion },
+      { tag: "ot", label: entry.hours + "h ESIP premium (unconfirmed)", amt: esipPortion },
+    ] };
+  }
+
+  if (entry.type === "holiday" || entry.type === "comp_used" || entry.type === "training") {
+    // Paid leave/training time — regular rate, no OT accrual, regardless of
+    // how many hours or what else happened that day/week.
+    const pay = entry.hours * rate;
+    const labelMap = { holiday: "h holiday pay", comp_used: "h comp time used", training: "h training pay" };
+    return { pay, regularHoursAdded: 0, lines: [{ tag: "reg", label: entry.hours + labelMap[entry.type], amt: pay }] };
+  }
+
+  if (entry.type === "oncall") {
+    const pay = entry.hours * settings.onCallRate;
+    return { pay, regularHoursAdded: 0, lines: [{ tag: "oncall", label: entry.hours + "h on-call", amt: pay }] };
+  }
+  if (entry.type === "callback_cancelled") {
+    const pay = rate * settings.callbackMinHours;
+    return { pay, regularHoursAdded: 0, lines: [
+      { tag: "reg", label: settings.callbackMinHours + "h straight (cancelled)", amt: pay },
+    ] };
+  }
+  if (entry.type === "callback_1hr") {
+    const pay = entry.hours * dtRate;
+    return { pay, regularHoursAdded: entry.hours, lines: [{ tag: "dt", label: entry.hours + "h @ 2x (recall <1h)", amt: pay }] };
+  }
+
+  if (entry.type === "callback") {
+    // On-call call-in — confirmed by payroll (ticket opened after an earlier
+    // "straight time under 2 hours" explanation turned out to be a mistake):
+    // the full call-in is paid at 1.5x, per Article 14.K. The 2-hour minimum
+    // sets a floor on the HOURS paid, not the rate \u2014 a nurse called in for
+    // less than 2 hours still gets 2 hours at 1.5x, not 2 hours straight.
+    const worked = entry.hours;
+    const hours = Math.max(worked, settings.callbackMinHours);
+    const pay = hours * otRate;
+    const label = worked < settings.callbackMinHours
+      ? hours + "h @ 1.5x (call-in minimum)"
+      : hours + "h @ 1.5x (call-in)";
+    return { pay, regularHoursAdded: hours, lines: [{ tag: "ot", label, amt: pay }] };
+  }
+
+  let hours = entry.hours;
+
+  const dailyRegular = Math.min(hours, 12);
+  const dailyDT = Math.max(0, hours - 12);
+  const totalPriorAndThis = priorRegularHours + dailyRegular;
+  const weeklyOT = Math.max(0, Math.min(dailyRegular, totalPriorAndThis - 40));
+  const trueRegular = dailyRegular - weeklyOT;
+
+  const lines = [];
+  let pay = 0;
+  if (trueRegular > 0) {
+    const rr = entry.restViolation ? otRate : rate;
+    const amt = trueRegular * rr;
+    pay += amt;
+    lines.push({ tag: entry.restViolation ? "ot" : "reg", label: trueRegular + "h" + (entry.restViolation ? " @ 1.5x (<6h rest)" : " regular"), amt });
+  }
+  if (weeklyOT > 0) { const amt = weeklyOT * otRate; pay += amt; lines.push({ tag: "ot", label: weeklyOT + "h @ 1.5x (weekly OT)", amt }); }
+  if (dailyDT > 0) { const amt = dailyDT * dtRate; pay += amt; lines.push({ tag: "dt", label: dailyDT + "h @ 2x (>12h shift)", amt }); }
+
+  return { pay, regularHoursAdded: dailyRegular, lines };
+}
+
+function el(tag, opts, children) {
+  const e = document.createElement(tag);
+  if (opts) {
+    for (const k in opts) {
+      if (k === "class") e.className = opts[k];
+      else if (k === "text") e.textContent = opts[k];
+      else if (k === "html") e.innerHTML = opts[k];
+      else if (k === "title") e.title = opts[k];
+      else e.setAttribute(k, opts[k]);
+    }
+  }
+  (children || []).forEach(c => e.appendChild(c));
+  return e;
+}
+
+function computeWeeks() {
+  const byWeek = {};
+  const sorted = [...entries].sort((a, b) => a.date.localeCompare(b.date));
+  sorted.forEach(e => {
+    const wk = getWeekStart(e.date);
+    if (!byWeek[wk]) byWeek[wk] = { start: wk, entries: [], total: 0 };
+  });
+  const weekKeys = Object.keys(byWeek).sort();
+  weekKeys.forEach(wk => {
+    let running = 0;
+    const weekEntries = sorted.filter(e => getWeekStart(e.date) === wk);
+    weekEntries.forEach(e => {
+      const result = computeEntry(e, running);
+      running += result.regularHoursAdded;
+      byWeek[wk].entries.push({ ...e, result });
+      byWeek[wk].total += result.pay;
+    });
+  });
+  return weekKeys.map(k => byWeek[k]);
+}
+
+function computeExpectedSummary(startDate, endDate) {
+  const weeks = computeWeeks();
+  const cats = {
+    regular: 0, weeklyOT: 0, restOT: 0, dailyDT: 0, recallDT: 0,
+    onCallStandby: 0, callInStraight: 0, callInPremium: 0,
+    training: 0, holiday: 0, compUsed: 0, extraShift: 0,
+    eveningDiff: 0, nightDiff: 0, weekendDiff: 0, pay: 0,
+  };
+  weeks.forEach(wk => {
+    wk.entries.forEach(e => {
+      if (e.date < startDate || e.date > endDate) return;
+      cats.pay += e.result.pay;
+      const diffEligible = e.type === "shift" || e.type === "training" || e.type === "callback" || e.type === "callback_1hr" || e.type === "extra_shift";
+      if (diffEligible) {
+        const diffType = resolveDifferential(e);
+        if (diffType === "evening") cats.eveningDiff += e.hours;
+        if (diffType === "night") cats.nightDiff += e.hours;
+        if (diffType === "weekend") cats.weekendDiff += e.hours;
+      }
+
+      if (e.type === "oncall") { cats.onCallStandby += e.hours; return; }
+      if (e.type === "holiday") { cats.holiday += e.hours; return; }
+      if (e.type === "comp_used") { cats.compUsed += e.hours; return; }
+      if (e.type === "training") { cats.training += e.hours; return; }
+      if (e.type === "extra_shift") { cats.extraShift += e.hours; return; }
+      if (e.type === "callback_1hr") { cats.recallDT += e.hours; return; }
+      if (e.type === "callback_cancelled") { return; }
+      if (e.type === "callback") {
+        e.result.lines.forEach(l => {
+          if (l.tag === "reg") cats.callInStraight += parseFloat(l.label);
+          if (l.tag === "ot") cats.callInPremium += parseFloat(l.label);
+        });
+        return;
+      }
+      // shift only, from here down
+      e.result.lines.forEach(l => {
+        const h = parseFloat(l.label);
+        if (l.tag === "reg") cats.regular += h;
+        else if (l.tag === "dt") cats.dailyDT += h;
+        else if (l.tag === "ot" && l.label.includes("<6h rest")) cats.restOT += h;
+        else if (l.tag === "ot") cats.weeklyOT += h;
+      });
+    });
+  });
+  return cats;
+}
+
+function render() {
+  const container = document.getElementById("weeksContainer");
+  container.innerHTML = "";
+
+  const orderedWeeks = computeWeeks().reverse();
+
+  if (orderedWeeks.length === 0) {
+    container.appendChild(el("div", { class: "empty", text: "No entries logged yet. Add your first shift above." }));
+    return;
+  }
+
+  orderedWeeks.forEach(wk => {
+    const block = el("div", { class: "week-block" });
+    const header = el("div", { class: "week-header" }, [
+      el("span", { class: "label", text: "Week of " + fmtWeek(wk.start) }),
+      el("span", { class: "total", text: money(wk.total) }),
+    ]);
+    block.appendChild(header);
+
+    wk.entries.forEach(e => {
+      const meta = el("div", { class: "meta" });
+      e.result.lines.forEach(l => meta.appendChild(el("span", { class: "tag tag-" + l.tag, text: l.label })));
+      if (resolveDifferential(e) !== "none" && e.type !== "callback_cancelled" && e.type !== "oncall" && e.type !== "comp_used") {
+        meta.appendChild(el("span", { class: "tag tag-diff", text: "+" + diffLabel(e) }));
+      }
+
+      const left = el("div", {}, [
+        el("div", { text: e.date + " — " + TYPE_INFO[e.type].label }),
+        meta,
+      ]);
+
+      const editBtn = el("button", { class: "edit", text: "✎", title: "Edit" });
+      editBtn.addEventListener("click", () => loadEntryForEdit(e.id));
+
+      const delBtn = el("button", { class: "del", text: "✕", title: "Remove" });
+      delBtn.addEventListener("click", () => {
+        if (!confirm("Are you sure you want to delete this entry?")) return;
+        entries = entries.filter(x => x.id !== e.id);
+        if (editingId === e.id) cancelEdit();
+        persistEntries();
+        render();
+      });
+
+      const right = el("div", { class: "right" }, [
+        el("span", { class: "amt", text: money(e.result.pay) }),
+        editBtn,
+        delBtn,
+      ]);
+
+      const rowEl = el("div", { class: "entry" + (editingId === e.id ? " entry-editing" : "") }, [left, right]);
+      block.appendChild(rowEl);
+    });
+
+    container.appendChild(block);
+  });
+}
+
+function updateTypeUI() {
+  const type = document.getElementById("entryType").value;
+  document.getElementById("typeNote").textContent = TYPE_INFO[type].note;
+  const hoursInput = document.getElementById("entryHours");
+  const diffField = document.getElementById("diffField");
+  if (type === "callback_cancelled") {
+    hoursInput.disabled = true;
+    hoursInput.placeholder = "n/a — flat payout";
+    hoursInput.value = "";
+  } else {
+    hoursInput.disabled = false;
+    hoursInput.placeholder = "";
+    if (!hoursInput.value) hoursInput.value = (type === "oncall") ? "8" : (type === "training" ? "4" : ((type === "holiday" || type === "comp_used") ? "8" : "12"));
+  }
+  diffField.style.display = (type === "oncall" || type === "comp_used") ? "none" : "block";
+  document.getElementById("timeFields").style.display = (type === "callback_cancelled" || type === "comp_used") ? "none" : "grid";
+  document.getElementById("mealField").style.display = (type === "oncall" || type === "callback_cancelled" || type === "comp_used") ? "none" : "block";
+  document.getElementById("restField").style.display = (type === "shift") ? "block" : "none";
+
+  const hoursLabel = document.getElementById("hoursLabel");
+  if (type === "oncall") hoursLabel.textContent = "Hours (auto-filled from start/end time)";
+  else if (type === "callback_cancelled") hoursLabel.textContent = "Hours";
+  else hoursLabel.textContent = "Hours (auto-filled: clock time minus 30-min meal)";
+}
+
+function loadEntryForEdit(id) {
+  const e = entries.find(x => x.id === id);
+  if (!e) return;
+  editingId = id;
+  document.getElementById("entryDate").value = e.date;
+  document.getElementById("entryType").value = e.type;
+  document.getElementById("entryHours").value = e.hours;
+  document.getElementById("entryDiff").value = e.diffMode || "none";
+  document.getElementById("entryStart").value = e.startTime || "";
+  document.getElementById("entryEnd").value = e.endTime || "";
+  document.getElementById("entryRest").checked = !!e.restViolation;
+  document.getElementById("entryMealSkipped").checked = !!e.mealSkipped;
+  updateTypeUI();
+  document.getElementById("formHeading").textContent = "Edit entry";
+  document.getElementById("addBtn").textContent = "Save changes";
+  document.getElementById("cancelEditBtn").style.display = "inline-block";
+  render();
+  document.getElementById("entryDate").scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+function showAddBtnFeedback(label) {
+  const btn = document.getElementById("addBtn");
+  const original = btn.dataset.originalLabel || btn.textContent;
+  btn.dataset.originalLabel = original;
+  btn.textContent = label;
+  btn.classList.add("btn-confirmed");
+  clearTimeout(btn._feedbackTimer);
+  btn._feedbackTimer = setTimeout(() => {
+    btn.textContent = btn.dataset.originalLabel;
+    btn.classList.remove("btn-confirmed");
+  }, 1100);
+}
+
+function cancelEdit() {
+  editingId = null;
+  document.getElementById("formHeading").textContent = "Log an entry";
+  document.getElementById("addBtn").textContent = "Add entry";
+  document.getElementById("cancelEditBtn").style.display = "none";
+  document.getElementById("entryHours").value = "";
+  document.getElementById("entryStart").value = "";
+  document.getElementById("entryEnd").value = "";
+  document.getElementById("entryRest").checked = false;
+  document.getElementById("entryMealSkipped").checked = false;
+  document.getElementById("entryDiff").value = "auto";
+  document.getElementById("entryDate").value = localDateStr(new Date());
+  updateTypeUI();
+  render();
+}
+
+function loadSettingsUI() {
+  document.getElementById("baseRate").value = settings.baseRate;
+  document.getElementById("onCallRate").value = settings.onCallRate;
+  document.getElementById("eveningDiff").value = settings.eveningDiff;
+  document.getElementById("nightDiff").value = settings.nightDiff;
+  document.getElementById("weekendDiff").value = settings.weekendDiff;
+  document.getElementById("callbackMinHours").value = settings.callbackMinHours;
+}
+
+function persistSettings() {
+  storageAdapter.set("settings", JSON.stringify(settings));
+}
+function persistEntries() {
+  storageAdapter.set("entries", JSON.stringify(entries));
+}
+
+function renderExpectedSummary() {
+  const start = document.getElementById("verifyStart").value;
+  const end = document.getElementById("verifyEnd").value;
+  const box = document.getElementById("expectedSummary");
+  if (!start || !end) { box.innerHTML = ""; return; }
+  const s = computeExpectedSummary(start, end);
+  const rows = [
+    ["Regular", s.regular], ["Weekly OT (1.5x)", s.weeklyOT], ["Rest-violation OT (1.5x)", s.restOT],
+    ["Daily double time (2x)", s.dailyDT], ["Recall double time (2x)", s.recallDT],
+    ["On-call standby", s.onCallStandby], ["Call-in, straight (\u22642h)", s.callInStraight],
+    ["Call-in, premium (1.5x)", s.callInPremium], ["Training", s.training], ["Holiday", s.holiday],
+    ["Extra shift (ESIP, unconfirmed)", s.extraShift],
+    ["Comp time used", s.compUsed], ["Evening diff", s.eveningDiff], ["Night diff", s.nightDiff], ["Weekend diff", s.weekendDiff],
+  ].filter(r => r[1] > 0.001);
+  let html = '<div style="margin-top:10px; padding:12px; background:#FAFBFA; border-radius:8px;">';
+  html += '<div style="font-family:var(--mono); font-size:11px; text-transform:uppercase; letter-spacing:.08em; color:var(--ink-soft); margin-bottom:8px;">Expected from tracker</div>';
+  rows.forEach(r => { html += `<div class="breakdown-line"><span>${r[0]}</span><b>${r[1].toFixed(2)}h</b></div>`; });
+  html += `<div class="breakdown-line" style="border-top:1px solid var(--line); margin-top:6px; padding-top:8px;"><span>Total pay</span><b>${money(s.pay)}</b></div>`;
+  html += '</div>';
+  box.innerHTML = html;
+}
+
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result.split(",")[1]);
+    r.onerror = reject;
+    r.readAsDataURL(file);
+  });
+}
+
+async function analyzeStub() {
+  const start = document.getElementById("verifyStart").value;
+  const end = document.getElementById("verifyEnd").value;
+  const fileInput = document.getElementById("stubPhoto");
+  const status = document.getElementById("verifyStatus");
+  const results = document.getElementById("verifyResults");
+  results.innerHTML = "";
+  if (!start || !end) { status.textContent = "Set the pay period start and end dates first."; return; }
+  if (!fileInput.files[0]) { status.textContent = "Choose a photo or PDF of the paystub first."; return; }
+
+  status.textContent = "Reading paystub\u2026";
+  try {
+    const base64 = await fileToBase64(fileInput.files[0]);
+    const mediaType = fileInput.files[0].type || "image/jpeg";
+    const isPdf = mediaType === "application/pdf";
+    const contentBlock = isPdf
+      ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: base64 } }
+      : { type: "image", source: { type: "base64", media_type: mediaType, data: base64 } };
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-6",
+        max_tokens: 1000,
+        messages: [{
+          role: "user",
+          content: [
+            contentBlock,
+            { type: "text", text: "This is a photo or PDF of the 'Hours and Earnings' table on a pay stub. Return ONLY raw JSON (no markdown fences, no commentary) as an array of objects, one per line item visible in the CURRENT period columns (ignore YTD columns): [{\"description\": string, \"hours\": number or null, \"earnings\": number or null}]. Use the exact description text as printed. If a line has no hours (like a flat stipend), use null for hours." }
+          ]
+        }]
+      })
+    });
+    const data = await response.json();
+    const textBlock = (data.content || []).map(b => b.text || "").join("");
+    const clean = textBlock.replace(/```json|```/g, "").trim();
+    const lines = JSON.parse(clean);
+
+    const expected = computeExpectedSummary(start, end);
+    const keywordMap = [
+      [/regular(?!-training)/i, "regular"], [/training/i, "training"], [/holiday/i, "holiday"],
+      [/comp(ensatory)?/i, "compUsed"], [/double/i, "dailyDT"], [/premium|t50/i, "weeklyOT"],
+      [/straight/i, null], // matched separately below (ambiguous: could be regular OT-straight or call-in straight)
+      [/on call|toc/i, "onCallStandby"], [/evening/i, "eveningDiff"], [/night/i, "nightDiff"], [/weekend/i, "weekendDiff"],
+    ];
+    function classify(desc) {
+      for (const [re, cat] of keywordMap) { if (re.test(desc) && cat) return cat; }
+      return null;
+    }
+    const extractedTotals = {};
+    lines.forEach(l => {
+      const cat = classify(l.description || "");
+      if (cat && typeof l.hours === "number") extractedTotals[cat] = (extractedTotals[cat] || 0) + l.hours;
+    });
+
+    let html = '<table style="width:100%; border-collapse:collapse; margin-top:12px; font-size:13px;">';
+    html += '<tr style="text-align:left; color:var(--ink-soft); font-size:11px; text-transform:uppercase;"><th style="padding:6px 4px;">Stub line</th><th style="padding:6px 4px;">Hours</th><th style="padding:6px 4px;">Earnings</th></tr>';
+    lines.forEach(l => {
+      html += `<tr style="border-top:1px dashed var(--line);"><td style="padding:6px 4px;">${l.description}</td><td style="padding:6px 4px; font-family:var(--mono);">${l.hours ?? "\u2014"}</td><td style="padding:6px 4px; font-family:var(--mono);">${l.earnings != null ? money(l.earnings) : "\u2014"}</td></tr>`;
+    });
+    html += "</table>";
+
+    html += '<div style="margin-top:14px; padding:12px; background:#FAFBFA; border-radius:8px;">';
+    html += '<div style="font-family:var(--mono); font-size:11px; text-transform:uppercase; letter-spacing:.08em; color:var(--ink-soft); margin-bottom:8px;">Category check (tracker expected vs. stub, where matchable)</div>';
+    const catLabels = { regular: "Regular", training: "Training", holiday: "Holiday", compUsed: "Comp time used", dailyDT: "Double time", weeklyOT: "1.5x premium (weekly OT / T50)", onCallStandby: "On-call standby", eveningDiff: "Evening diff", nightDiff: "Night diff", weekendDiff: "Weekend diff" };
+    Object.keys(catLabels).forEach(cat => {
+      const exp = (expected[cat] || 0) + (cat === "weeklyOT" ? (expected.restOT || 0) + (expected.callInPremium || 0) : 0) + (cat === "dailyDT" ? (expected.recallDT || 0) : 0);
+      const got = extractedTotals[cat] || 0;
+      if (exp < 0.01 && got < 0.01) return;
+      const diff = Math.abs(exp - got);
+      const flag = diff > 0.3;
+      html += `<div class="breakdown-line"><span>${catLabels[cat]}</span><b class="${flag ? 'variance-bad' : 'variance-good'}">${exp.toFixed(2)}h expected vs ${got.toFixed(2)}h on stub</b></div>`;
+    });
+    html += '</div>';
+    html += '<p class="type-note" style="margin-top:10px;">This matches by keyword in the stub\u2019s line descriptions, so codes it doesn\u2019t recognize (like T50 vs OTP-Premium naming, or ESIP) may need a manual look at the raw table above. Also: the stub\u2019s "Regular-Training Hour" line mixes genuine training with a cost-code quirk that tags some regular shifts too \u2014 so it won\u2019t line up 1:1 with the tracker\u2019s Training category, and that\u2019s expected, not an error.</p>';
+
+    results.innerHTML = html;
+    status.textContent = "Done.";
+  } catch (err) {
+    status.textContent = "Couldn't read that file \u2014 try a clearer photo, or a cropped image/PDF of just the Hours and Earnings table.";
+  }
+}
+
+async function init() {
+  try {
+    const s = await storageAdapter.get("settings");
+    if (s && s.value) settings = { ...DEFAULT_SETTINGS, ...JSON.parse(s.value) };
+  } catch (e) {}
+  try {
+    const e = await storageAdapter.get("entries");
+    if (e && e.value) entries = JSON.parse(e.value);
+  } catch (e) {}
+
+  loadSettingsUI();
+  document.getElementById("entryDate").value = localDateStr(new Date());
+  updateTypeUI();
+  render();
+
+  document.getElementById("settingsToggle").addEventListener("click", () => {
+    const panel = document.getElementById("settingsPanel");
+    const isHidden = panel.style.display === "none";
+    panel.style.display = isHidden ? "grid" : "none";
+    document.getElementById("settingsToggle").textContent = isHidden ? "hide" : "edit rates";
+  });
+
+  ["baseRate", "onCallRate", "eveningDiff", "nightDiff", "weekendDiff", "callbackMinHours"].forEach(id => {
+    document.getElementById(id).addEventListener("change", (ev) => {
+      settings[id] = parseFloat(ev.target.value) || 0;
+      persistSettings();
+      render();
+    });
+  });
+
+  document.getElementById("entryType").addEventListener("change", updateTypeUI);
+  attachTimeAutoFormat(document.getElementById("entryStart"));
+  attachTimeAutoFormat(document.getElementById("entryEnd"));
+  document.getElementById("entryStart").addEventListener("blur", autoCalcHours);
+  document.getElementById("entryEnd").addEventListener("blur", autoCalcHours);
+  document.getElementById("entryMealSkipped").addEventListener("change", autoCalcHours);
+
+  document.getElementById("cancelEditBtn").addEventListener("click", cancelEdit);
+
+  document.getElementById("addBtn").addEventListener("click", () => {
+    const type = document.getElementById("entryType").value;
+    const date = document.getElementById("entryDate").value;
+    const hoursVal = document.getElementById("entryHours").value;
+    const diffApplies = type === "shift" || type === "training" || type === "callback" || type === "callback_1hr" || type === "extra_shift";
+    const diffMode = diffApplies ? document.getElementById("entryDiff").value : "none";
+    const startTime = document.getElementById("entryStart").value;
+    const endTime = document.getElementById("entryEnd").value;
+    const restViolation = document.getElementById("entryRest").checked;
+    const mealSkipped = document.getElementById("entryMealSkipped").checked;
+    if (!date) { alert("Pick a date."); return; }
+    if (type !== "callback_cancelled" && (!hoursVal || parseFloat(hoursVal) <= 0)) { alert("Enter hours."); return; }
+    if (type === "callback" && startTime && endTime) {
+      const cbRange = entryRangeMs(date, startTime, endTime);
+      splitStandbyForCallback(cbRange);
+    }
+    const wasEditing = !!editingId;
+    if (editingId) {
+      const idx = entries.findIndex(x => x.id === editingId);
+      if (idx !== -1) {
+        entries[idx] = { id: editingId, date, type, hours: parseFloat(hoursVal) || 0, diffMode, startTime, endTime, restViolation, mealSkipped };
+      }
+      cancelEdit();
+    } else {
+      entries.push({ id: uid(), date, type, hours: parseFloat(hoursVal) || 0, diffMode, startTime, endTime, restViolation, mealSkipped });
+    }
+    persistEntries();
+    render();
+    renderExpectedSummary();
+    showAddBtnFeedback(wasEditing ? "Saved \u2713" : "Added \u2713");
+  });
+
+  document.getElementById("verifyStart").addEventListener("change", renderExpectedSummary);
+  document.getElementById("verifyEnd").addEventListener("change", renderExpectedSummary);
+
+  document.getElementById("exportBtn").addEventListener("click", () => {
+    const blob = new Blob([JSON.stringify({ settings, entries }, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "shift-tracker-backup.json";
+    a.click();
+    URL.revokeObjectURL(url);
+  });
+
+  document.getElementById("importFile").addEventListener("change", async (ev) => {
+    const file = ev.target.files[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+      if (data.settings) settings = { ...DEFAULT_SETTINGS, ...data.settings };
+      if (Array.isArray(data.entries)) entries = data.entries;
+      persistSettings();
+      persistEntries();
+      loadSettingsUI();
+      render();
+      renderExpectedSummary();
+      alert("Backup restored.");
+    } catch (e) {
+      alert("Couldn't read that backup file.");
+    }
+    ev.target.value = "";
+  });
+
+  document.getElementById("clearDataBtn").addEventListener("click", () => {
+    const sure = confirm("This will permanently erase all logged entries and reset your pay rates on this device/browser. This can't be undone unless you have a backup file. Continue?");
+    if (!sure) return;
+    entries = [];
+    settings = { ...DEFAULT_SETTINGS };
+    editingId = null;
+    persistEntries();
+    persistSettings();
+    loadSettingsUI();
+    cancelEdit();
+    render();
+    renderExpectedSummary();
+    alert("All data cleared.");
+  });
+
+  updateSaveStatus();
+}
+
+init();
+</script>
+</body>
+</html>
