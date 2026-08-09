@@ -32,6 +32,7 @@
     margin: 0 auto;
   }
   .masthead { margin-bottom: 22px; }
+  .masthead-top { display: flex; justify-content: space-between; align-items: center; }
   .masthead .kicker {
     font-family: var(--mono);
     font-size: 11px;
@@ -40,6 +41,8 @@
     color: var(--pulse);
     margin-bottom: 6px;
   }
+  .auth-bar { display: flex; align-items: center; gap: 10px; }
+  .auth-bar .auth-email { font-family: var(--mono); font-size: 11px; color: var(--ink-soft); }
   .masthead h1 { font-size: 26px; margin: 0 0 4px; font-weight: 650; letter-spacing: -0.01em; }
   .masthead p { margin: 0; color: var(--ink-soft); font-size: 13.5px; }
   .trace { width: 100%; height: 22px; margin: 14px 0 4px; display: block; }
@@ -142,13 +145,34 @@
   </div>
 
   <div class="masthead">
-    <div class="kicker">Personal pay verification</div>
+    <div class="masthead-top">
+      <div class="kicker">Personal pay verification</div>
+      <div class="auth-bar" id="authBar" style="display:none;">
+        <button class="settings-toggle" id="signInToggle">sign in</button>
+      </div>
+    </div>
     <h1>Shift Pay Tracker</h1>
     <p>Log your actual hours by category — compare the total against what shows up on your paycheck.</p>
     <svg class="trace" viewBox="0 0 400 22" preserveAspectRatio="none">
       <polyline points="0,11 120,11 135,11 145,2 155,20 165,4 175,11 400,11"
         fill="none" stroke="#0FA37F" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" opacity="0.55" />
     </svg>
+  </div>
+
+  <div class="card" id="accountCard" style="display:none;">
+    <h2>Sync across devices</h2>
+    <p class="type-note" style="margin-top:0;">Sign in with just your email — no password — to back up your entries and access them from any device. Skip this and everything still works, saved only to this browser.</p>
+    <div class="grid2">
+      <div class="field" style="grid-column: 1 / -1;">
+        <label>Email</label>
+        <input type="email" id="authEmail" placeholder="you@example.com">
+      </div>
+    </div>
+    <div class="row-actions">
+      <button class="btn-primary" id="sendMagicLinkBtn">Send sign-in link</button>
+      <button class="btn-ghost" id="cancelAuthBtn">Cancel</button>
+    </div>
+    <p class="type-note" id="authStatus" style="margin-top:10px;"></p>
   </div>
 
   <div id="saveStatus" style="font-size:12.5px; color:var(--amber); margin-bottom:14px;"></div>
@@ -301,7 +325,17 @@
 
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script>
+// Fill these in once the Supabase project exists (Project Settings -> API).
+// Sign-in stays hidden and everything falls back to browser-only storage
+// until both are set.
+const SUPABASE_URL = "";
+const SUPABASE_ANON_KEY = "";
+const supabaseClient = (SUPABASE_URL && SUPABASE_ANON_KEY && window.supabase)
+  ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+  : null;
+
 const DEFAULT_SETTINGS = { baseRate: 45, eveningDiff: 3.25, nightDiff: 5.00, weekendDiff: 3.80, onCallRate: 20, callbackMinHours: 2, role: "rn" };
 
 // Differential/on-call presets by job title. RN rates confirmed against real
@@ -330,7 +364,17 @@ const TYPE_INFO = {
 
 const storageAdapter = {
   lastSaveFailed: false,
+  lastCloudError: false,
+  session: null,
   async get(key) {
+    if (supabaseClient && this.session) {
+      try {
+        const { data, error } = await supabaseClient.from("kv_store").select("value").eq("key", key).maybeSingle();
+        this.lastCloudError = !!error;
+        updateSaveStatus();
+        return (!error && data) ? { value: data.value } : null;
+      } catch (e) { this.lastCloudError = true; updateSaveStatus(); return null; }
+    }
     if (window.storage && typeof window.storage.get === "function") {
       try { return await window.storage.get(key); } catch (e) { return null; }
     }
@@ -340,6 +384,14 @@ const storageAdapter = {
     } catch (e) { return null; }
   },
   async set(key, value) {
+    if (supabaseClient && this.session) {
+      try {
+        const { error } = await supabaseClient.from("kv_store").upsert({ user_id: this.session.user.id, key, value, updated_at: new Date().toISOString() });
+        this.lastCloudError = !!error;
+      } catch (e) { this.lastCloudError = true; }
+      updateSaveStatus();
+      return;
+    }
     if (window.storage && typeof window.storage.set === "function") {
       try { await window.storage.set(key, value); this.lastSaveFailed = false; return; } catch (e) { /* fall through */ }
     }
@@ -356,9 +408,56 @@ const storageAdapter = {
 function updateSaveStatus() {
   const el = document.getElementById("saveStatus");
   if (!el) return;
+  if (storageAdapter.lastCloudError) {
+    el.textContent = "⚠ Couldn't reach your account to save — check your connection. Your last synced data is still safe.";
+    return;
+  }
   el.textContent = storageAdapter.lastSaveFailed
     ? "⚠ This browser isn't saving data between visits — use Backup / Restore below so you don't lose your settings or entries."
     : "";
+}
+
+function updateAuthUI() {
+  const bar = document.getElementById("authBar");
+  const card = document.getElementById("accountCard");
+  if (!supabaseClient) { bar.style.display = "none"; card.style.display = "none"; return; }
+  bar.style.display = "flex";
+  bar.innerHTML = "";
+  if (storageAdapter.session) {
+    card.style.display = "none";
+    bar.appendChild(el("span", { class: "auth-email", text: storageAdapter.session.user.email }));
+    const signOutBtn = el("button", { class: "settings-toggle", text: "sign out" });
+    signOutBtn.addEventListener("click", async () => { await supabaseClient.auth.signOut(); });
+    bar.appendChild(signOutBtn);
+  } else {
+    const signInBtn = el("button", { id: "signInToggle", class: "settings-toggle", text: "sign in" });
+    signInBtn.addEventListener("click", () => {
+      const isHidden = card.style.display === "none";
+      card.style.display = isHidden ? "block" : "none";
+      signInBtn.textContent = isHidden ? "close" : "sign in";
+    });
+    bar.appendChild(signInBtn);
+  }
+}
+
+async function loadDataFromStorage() {
+  const s = await storageAdapter.get("settings");
+  settings = (s && s.value) ? { ...DEFAULT_SETTINGS, ...JSON.parse(s.value) } : { ...DEFAULT_SETTINGS };
+  const e = await storageAdapter.get("entries");
+  entries = (e && e.value) ? JSON.parse(e.value) : [];
+}
+
+async function maybeImportLocalData() {
+  try {
+    const localEntries = localStorage.getItem("shift_tracker_entries");
+    if (!localEntries) return;
+    const { data: existing } = await supabaseClient.from("kv_store").select("key").eq("key", "entries").maybeSingle();
+    if (existing) return;
+    if (!confirm("Found existing entries saved in this browser. Import them into your new account?")) return;
+    const localSettings = localStorage.getItem("shift_tracker_settings");
+    if (localSettings) await storageAdapter.set("settings", localSettings);
+    await storageAdapter.set("entries", localEntries);
+  } catch (e) {}
 }
 
 let settings = { ...DEFAULT_SETTINGS };
@@ -870,14 +969,48 @@ function renderExpectedSummary() {
 }
 
 async function init() {
+  if (supabaseClient) {
+    const { data } = await supabaseClient.auth.getSession();
+    storageAdapter.session = data.session;
+    supabaseClient.auth.onAuthStateChange(async (event, session) => {
+      const hadSession = !!storageAdapter.session;
+      storageAdapter.session = session;
+      updateAuthUI();
+      if (event === "SIGNED_IN" && !hadSession) {
+        await maybeImportLocalData();
+        await loadDataFromStorage();
+        loadSettingsUI();
+        render();
+        renderExpectedSummary();
+        document.getElementById("authStatus").textContent = "";
+      }
+      if (event === "SIGNED_OUT") {
+        await loadDataFromStorage();
+        loadSettingsUI();
+        render();
+        renderExpectedSummary();
+      }
+    });
+  }
+  updateAuthUI();
+
   try {
-    const s = await storageAdapter.get("settings");
-    if (s && s.value) settings = { ...DEFAULT_SETTINGS, ...JSON.parse(s.value) };
+    await loadDataFromStorage();
   } catch (e) {}
-  try {
-    const e = await storageAdapter.get("entries");
-    if (e && e.value) entries = JSON.parse(e.value);
-  } catch (e) {}
+
+  document.getElementById("cancelAuthBtn").addEventListener("click", () => {
+    document.getElementById("accountCard").style.display = "none";
+    document.getElementById("signInToggle").textContent = "sign in";
+  });
+
+  document.getElementById("sendMagicLinkBtn").addEventListener("click", async () => {
+    const email = document.getElementById("authEmail").value.trim();
+    const status = document.getElementById("authStatus");
+    if (!email) { status.textContent = "Enter an email address."; return; }
+    status.textContent = "Sending…";
+    const { error } = await supabaseClient.auth.signInWithOtp({ email, options: { emailRedirectTo: window.location.origin } });
+    status.textContent = error ? "Couldn't send that — try again." : "Check your email for a sign-in link.";
+  });
 
   loadSettingsUI();
   document.getElementById("entryDate").value = localDateStr(new Date());
