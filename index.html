@@ -101,8 +101,10 @@
     padding: 10px 4px 8px;
     border-bottom: 1px solid var(--line);
     margin-bottom: 8px;
+    cursor: pointer;
   }
   .week-header .label { font-family: var(--mono); font-size: 12px; color: var(--ink-soft); }
+  .week-header .arrow { display: inline-block; width: 1em; color: var(--pulse); }
   .week-header .total { font-family: var(--mono); font-size: 16px; font-weight: 600; }
 
   .entry {
@@ -302,10 +304,7 @@
   </div>
 
   <div class="card">
-    <div class="card-head">
-      <h2 style="margin:0;">Weekly totals</h2>
-      <button class="settings-toggle" id="showSavedToggle">show saved</button>
-    </div>
+    <h2>Weekly totals</h2>
     <div id="weeksContainer"></div>
   </div>
 
@@ -470,7 +469,6 @@ let settings = { ...DEFAULT_SETTINGS };
 let entries = [];
 let editingId = null;
 let savedWeeks = [];
-let weeklyShowSaved = false;
 
 function uid() { return Math.random().toString(36).slice(2, 10); }
 function money(n) { return n.toLocaleString(undefined, { style: "currency", currency: "USD" }); }
@@ -810,42 +808,37 @@ function render() {
   const container = document.getElementById("weeksContainer");
   container.innerHTML = "";
 
-  let orderedWeeks = computeWeeks().reverse();
-  const totalWeeks = orderedWeeks.length;
-  if (!weeklyShowSaved) {
-    orderedWeeks = orderedWeeks.filter(wk => !savedWeeks.includes(wk.start));
-  }
+  const orderedWeeks = computeWeeks().reverse();
 
   if (orderedWeeks.length === 0) {
-    const msg = totalWeeks === 0
-      ? "No entries logged yet. Add your first shift above."
-      : "No unsaved weeks — everything's been saved. Toggle \"show saved\" above to view them.";
-    container.appendChild(el("div", { class: "empty", text: msg }));
+    container.appendChild(el("div", { class: "empty", text: "No entries logged yet. Add your first shift above." }));
     return;
   }
 
   orderedWeeks.forEach(wk => {
-    const isSaved = savedWeeks.includes(wk.start);
+    const isCollapsed = savedWeeks.includes(wk.start);
     const block = el("div", { class: "week-block" });
 
-    const saveBtn = el("button", { class: "settings-toggle", text: isSaved ? "unsave" : "save period" });
-    saveBtn.addEventListener("click", () => {
-      savedWeeks = isSaved ? savedWeeks.filter(w => w !== wk.start) : [...savedWeeks, wk.start];
-      persistSavedWeeks();
-      render();
-    });
-
-    const labelGroup = el("div", { style: "display:flex; align-items:center; gap:10px;" }, [
+    const labelGroup = el("div", { style: "display:flex; align-items:baseline; gap:8px;" }, [
+      el("span", { class: "arrow", text: isCollapsed ? "▸" : "▾" }),
       el("span", { class: "label", text: "Week of " + fmtWeek(wk.start) }),
-      saveBtn,
     ]);
-    if (isSaved) labelGroup.appendChild(el("span", { class: "tag tag-oncall", text: "saved" }));
 
     const header = el("div", { class: "week-header" }, [
       labelGroup,
       el("span", { class: "total", text: money(wk.total) }),
     ]);
+    header.addEventListener("click", () => {
+      savedWeeks = isCollapsed ? savedWeeks.filter(w => w !== wk.start) : [...savedWeeks, wk.start];
+      persistSavedWeeks();
+      render();
+    });
     block.appendChild(header);
+
+    if (isCollapsed) {
+      container.appendChild(block);
+      return;
+    }
 
     wk.entries.forEach(e => {
       const meta = el("div", { class: "meta" });
@@ -1055,12 +1048,6 @@ async function init() {
     const isHidden = panel.style.display === "none";
     panel.style.display = isHidden ? "grid" : "none";
     document.getElementById("settingsToggle").textContent = isHidden ? "hide" : "edit rates";
-  });
-
-  document.getElementById("showSavedToggle").addEventListener("click", () => {
-    weeklyShowSaved = !weeklyShowSaved;
-    document.getElementById("showSavedToggle").textContent = weeklyShowSaved ? "hide saved" : "show saved";
-    render();
   });
 
   ["baseRate", "onCallRate", "eveningDiff", "nightDiff", "weekendDiff", "callbackMinHours"].forEach(id => {
