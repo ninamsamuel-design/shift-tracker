@@ -320,7 +320,7 @@ const TYPE_INFO = {
   shift: { label: "Scheduled shift", note: "Regular worked shift. Hours past 12 in this entry go to double time (2x); cumulative regular hours past 40 for the week go to 1.5x." },
   training: { label: "Training / orientation", note: "Paid at your regular rate. Does not count toward daily or weekly OT accrual (educational/orientation time is excluded from overtime calculations)." },
   extra_shift: { label: "Extra shift (ESIP, 1.5x bonus)", note: "" },
-  holiday: { label: "Holiday pay", note: "Paid at your regular rate. Doesn't count toward OT accrual \u2014 the contract excludes holiday pay from hours worked for overtime purposes." },
+  holiday: { label: "Holiday pay", note: "Paid at your regular rate. Doesn't count toward OT accrual \u2014 holiday pay is excluded from hours worked for overtime purposes." },
   comp_used: { label: "Compensatory time used", note: "Paid out at your regular rate for this period. Doesn't count toward OT accrual (it's paid leave, not worked time)." },
   callback: { label: "Called-in", note: "Paid at 1.5x, for actual hours worked or the 2-hour minimum \u2014 whichever is greater. Confirmed by payroll (ticket opened after an earlier straight-time explanation turned out to be wrong). If this overlaps an existing on-call standby entry, that standby entry auto-splits around it so the overnight total stays accurate." },
   callback_1hr: { label: "Call-back within 1 hr of clock-out", note: "Goes straight to double time (2x) for all hours." },
@@ -582,9 +582,9 @@ function computeEntryBase(entry, priorRegularHours) {
   if (entry.type === "callback") {
     // On-call call-in — confirmed by payroll (ticket opened after an earlier
     // "straight time under 2 hours" explanation turned out to be a mistake):
-    // the full call-in is paid at 1.5x, per Article 14.K. The 2-hour minimum
-    // sets a floor on the HOURS paid, not the rate \u2014 a nurse called in for
-    // less than 2 hours still gets 2 hours at 1.5x, not 2 hours straight.
+    // the full call-in is paid at 1.5x. The 2-hour minimum sets a floor on
+    // the HOURS paid, not the rate \u2014 someone called in for less than 2
+    // hours still gets 2 hours at 1.5x, not 2 hours straight.
     const worked = entry.hours;
     const hours = Math.max(worked, settings.callbackMinHours);
     const pay = hours * otRate;
