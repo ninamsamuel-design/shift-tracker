@@ -367,10 +367,11 @@ const storageAdapter = {
     if (supabaseClient && this.session) {
       try {
         const { data, error } = await supabaseClient.from("kv_store").select("value").eq("key", key).maybeSingle();
+        if (error) console.error("Supabase get(" + key + ") failed:", error);
         this.lastCloudError = !!error;
         updateSaveStatus();
         return (!error && data) ? { value: data.value } : null;
-      } catch (e) { this.lastCloudError = true; updateSaveStatus(); return null; }
+      } catch (e) { console.error("Supabase get(" + key + ") threw:", e); this.lastCloudError = true; updateSaveStatus(); return null; }
     }
     if (window.storage && typeof window.storage.get === "function") {
       try { return await window.storage.get(key); } catch (e) { return null; }
@@ -384,8 +385,9 @@ const storageAdapter = {
     if (supabaseClient && this.session) {
       try {
         const { error } = await supabaseClient.from("kv_store").upsert({ user_id: this.session.user.id, key, value, updated_at: new Date().toISOString() });
+        if (error) console.error("Supabase set(" + key + ") failed:", error);
         this.lastCloudError = !!error;
-      } catch (e) { this.lastCloudError = true; }
+      } catch (e) { console.error("Supabase set(" + key + ") threw:", e); this.lastCloudError = true; }
       updateSaveStatus();
       return;
     }
