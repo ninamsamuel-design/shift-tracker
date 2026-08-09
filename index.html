@@ -302,7 +302,10 @@
   </div>
 
   <div class="card">
-    <h2>Weekly totals</h2>
+    <div class="card-head">
+      <h2 style="margin:0;">Weekly totals</h2>
+      <button class="settings-toggle" id="showSavedToggle">show saved</button>
+    </div>
     <div id="weeksContainer"></div>
   </div>
 
@@ -444,6 +447,8 @@ async function loadDataFromStorage() {
   settings = (s && s.value) ? { ...DEFAULT_SETTINGS, ...JSON.parse(s.value) } : { ...DEFAULT_SETTINGS };
   const e = await storageAdapter.get("entries");
   entries = (e && e.value) ? JSON.parse(e.value) : [];
+  const sw = await storageAdapter.get("savedWeeks");
+  savedWeeks = (sw && sw.value) ? JSON.parse(sw.value) : [];
 }
 
 async function maybeImportLocalData() {
@@ -456,12 +461,16 @@ async function maybeImportLocalData() {
     const localSettings = localStorage.getItem("shift_tracker_settings");
     if (localSettings) await storageAdapter.set("settings", localSettings);
     await storageAdapter.set("entries", localEntries);
+    const localSavedWeeks = localStorage.getItem("shift_tracker_savedWeeks");
+    if (localSavedWeeks) await storageAdapter.set("savedWeeks", localSavedWeeks);
   } catch (e) {}
 }
 
 let settings = { ...DEFAULT_SETTINGS };
 let entries = [];
 let editingId = null;
+let savedWeeks = [];
+let weeklyShowSaved = false;
 
 function uid() { return Math.random().toString(36).slice(2, 10); }
 function money(n) { return n.toLocaleString(undefined, { style: "currency", currency: "USD" }); }
@@ -801,17 +810,39 @@ function render() {
   const container = document.getElementById("weeksContainer");
   container.innerHTML = "";
 
-  const orderedWeeks = computeWeeks().reverse();
+  let orderedWeeks = computeWeeks().reverse();
+  const totalWeeks = orderedWeeks.length;
+  if (!weeklyShowSaved) {
+    orderedWeeks = orderedWeeks.filter(wk => !savedWeeks.includes(wk.start));
+  }
 
   if (orderedWeeks.length === 0) {
-    container.appendChild(el("div", { class: "empty", text: "No entries logged yet. Add your first shift above." }));
+    const msg = totalWeeks === 0
+      ? "No entries logged yet. Add your first shift above."
+      : "No unsaved weeks — everything's been saved. Toggle \"show saved\" above to view them.";
+    container.appendChild(el("div", { class: "empty", text: msg }));
     return;
   }
 
   orderedWeeks.forEach(wk => {
+    const isSaved = savedWeeks.includes(wk.start);
     const block = el("div", { class: "week-block" });
-    const header = el("div", { class: "week-header" }, [
+
+    const saveBtn = el("button", { class: "settings-toggle", text: isSaved ? "unsave" : "save period" });
+    saveBtn.addEventListener("click", () => {
+      savedWeeks = isSaved ? savedWeeks.filter(w => w !== wk.start) : [...savedWeeks, wk.start];
+      persistSavedWeeks();
+      render();
+    });
+
+    const labelGroup = el("div", { style: "display:flex; align-items:center; gap:10px;" }, [
       el("span", { class: "label", text: "Week of " + fmtWeek(wk.start) }),
+      saveBtn,
+    ]);
+    if (isSaved) labelGroup.appendChild(el("span", { class: "tag tag-oncall", text: "saved" }));
+
+    const header = el("div", { class: "week-header" }, [
+      labelGroup,
       el("span", { class: "total", text: money(wk.total) }),
     ]);
     block.appendChild(header);
@@ -944,6 +975,9 @@ function persistSettings() {
 function persistEntries() {
   storageAdapter.set("entries", JSON.stringify(entries));
 }
+function persistSavedWeeks() {
+  storageAdapter.set("savedWeeks", JSON.stringify(savedWeeks));
+}
 
 function renderExpectedSummary() {
   const start = document.getElementById("verifyStart").value;
@@ -1023,6 +1057,12 @@ async function init() {
     document.getElementById("settingsToggle").textContent = isHidden ? "hide" : "edit rates";
   });
 
+  document.getElementById("showSavedToggle").addEventListener("click", () => {
+    weeklyShowSaved = !weeklyShowSaved;
+    document.getElementById("showSavedToggle").textContent = weeklyShowSaved ? "hide saved" : "show saved";
+    render();
+  });
+
   ["baseRate", "onCallRate", "eveningDiff", "nightDiff", "weekendDiff", "callbackMinHours"].forEach(id => {
     document.getElementById(id).addEventListener("change", (ev) => {
       settings[id] = parseFloat(ev.target.value) || 0;
@@ -1091,7 +1131,7 @@ async function init() {
   document.getElementById("verifyEnd").addEventListener("change", renderExpectedSummary);
 
   document.getElementById("exportBtn").addEventListener("click", () => {
-    const blob = new Blob([JSON.stringify({ settings, entries }, null, 2)], { type: "application/json" });
+    const blob = new Blob([JSON.stringify({ settings, entries, savedWeeks }, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -1108,8 +1148,10 @@ async function init() {
       const data = JSON.parse(text);
       if (data.settings) settings = { ...DEFAULT_SETTINGS, ...data.settings };
       if (Array.isArray(data.entries)) entries = data.entries;
+      if (Array.isArray(data.savedWeeks)) savedWeeks = data.savedWeeks;
       persistSettings();
       persistEntries();
+      persistSavedWeeks();
       loadSettingsUI();
       render();
       renderExpectedSummary();
@@ -1125,9 +1167,11 @@ async function init() {
     if (!sure) return;
     entries = [];
     settings = { ...DEFAULT_SETTINGS };
+    savedWeeks = [];
     editingId = null;
     persistEntries();
     persistSettings();
+    persistSavedWeeks();
     loadSettingsUI();
     cancelEdit();
     render();
