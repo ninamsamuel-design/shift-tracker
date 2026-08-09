@@ -172,6 +172,17 @@
       <button class="settings-toggle" id="settingsToggle">edit rates</button>
     </div>
     <div class="grid2" id="settingsPanel" style="display:none; margin-top:14px;">
+      <div class="field" style="grid-column: 1 / -1;">
+        <label>Job title</label>
+        <select id="roleSelect">
+          <option value="rn">RN</option>
+          <option value="cvt">Cardiovascular Tech (CVT)</option>
+          <option value="radtech">Interventional Radiologic Technologist</option>
+          <option value="radtech_sr">Interventional Radiologic Technologist, Sr</option>
+          <option value="custom">Other / custom</option>
+        </select>
+        <p class="type-note" style="margin-top:6px; margin-bottom:0;">Picking a title fills in the differential and on-call rates below from the official salary rate sheet — double check against your own paystub, and adjust any field manually if it's off.</p>
+      </div>
       <div class="field">
         <label>Base hourly rate</label>
         <input type="number" step="0.01" id="baseRate">
@@ -291,7 +302,19 @@
 </div>
 
 <script>
-const DEFAULT_SETTINGS = { baseRate: 45, eveningDiff: 3.25, nightDiff: 5.00, weekendDiff: 3.80, onCallRate: 20, callbackMinHours: 2 };
+const DEFAULT_SETTINGS = { baseRate: 45, eveningDiff: 3.25, nightDiff: 5.00, weekendDiff: 3.80, onCallRate: 20, callbackMinHours: 2, role: "rn" };
+
+// Differential/on-call presets by job title. RN rates confirmed against real
+// paystubs; tech rates from the official salary rate sheet (Ancillary Rates
+// table) \u2014 evening/night/on-call amounts confirmed there, but double-check
+// your own stub since these can vary by title code or change over time.
+const ROLE_PRESETS = {
+  rn: { label: "RN", eveningDiff: 3.25, nightDiff: 5.00, weekendDiff: 3.80, onCallRate: 20.00 },
+  cvt: { label: "Cardiovascular Tech (CVT)", eveningDiff: 2.00, nightDiff: 3.00, weekendDiff: 0.00, onCallRate: 12.00 },
+  radtech: { label: "Interventional Radiologic Technologist", eveningDiff: 2.00, nightDiff: 3.00, weekendDiff: 1.00, onCallRate: 9.25 },
+  radtech_sr: { label: "Interventional Radiologic Technologist, Sr", eveningDiff: 2.00, nightDiff: 3.00, weekendDiff: 1.00, onCallRate: 9.25 },
+  custom: { label: "Other / custom", eveningDiff: null, nightDiff: null, weekendDiff: null, onCallRate: null },
+};
 
 const TYPE_INFO = {
   shift: { label: "Scheduled shift", note: "Regular worked shift. Hours past 12 in this entry go to double time (2x); cumulative regular hours past 40 for the week go to 1.5x." },
@@ -808,6 +831,7 @@ function cancelEdit() {
 }
 
 function loadSettingsUI() {
+  document.getElementById("roleSelect").value = settings.role || "rn";
   document.getElementById("baseRate").value = settings.baseRate;
   document.getElementById("onCallRate").value = settings.onCallRate;
   document.getElementById("eveningDiff").value = settings.eveningDiff;
@@ -873,6 +897,21 @@ async function init() {
       persistSettings();
       render();
     });
+  });
+
+  document.getElementById("roleSelect").addEventListener("change", (ev) => {
+    const role = ev.target.value;
+    settings.role = role;
+    const preset = ROLE_PRESETS[role];
+    if (preset && preset.eveningDiff !== null) {
+      settings.eveningDiff = preset.eveningDiff;
+      settings.nightDiff = preset.nightDiff;
+      settings.weekendDiff = preset.weekendDiff;
+      settings.onCallRate = preset.onCallRate;
+      loadSettingsUI();
+    }
+    persistSettings();
+    render();
   });
 
   document.getElementById("entryType").addEventListener("change", updateTypeUI);
