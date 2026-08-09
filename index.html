@@ -327,11 +327,8 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script>
-// Fill these in once the Supabase project exists (Project Settings -> API).
-// Sign-in stays hidden and everything falls back to browser-only storage
-// until both are set.
-const SUPABASE_URL = "";
-const SUPABASE_ANON_KEY = "";
+const SUPABASE_URL = "https://exlsllbxfdjfbwebnvjv.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV4bHNsbGJ4ZmRqZmJ3ZWJudmp2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYyOTQxOTEsImV4cCI6MjEwMTg3MDE5MX0.3UsJHTDdOaI5HEiag33gtsw34r_KI5romBPOqZwVYVQ";
 const supabaseClient = (SUPABASE_URL && SUPABASE_ANON_KEY && window.supabase)
   ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
   : null;
