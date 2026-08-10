@@ -114,6 +114,7 @@
   }
   .entry:last-child { border-bottom: none; }
   .entry .meta { color: var(--ink-soft); font-size: 12px; margin-top: 4px; }
+  .dup-warning { color: var(--amber); font-size: 12px; margin-top: 4px; }
   .entry .right { display: flex; align-items: center; }
   .entry .amt { font-family: var(--mono); font-weight: 600; white-space: nowrap; margin-left: 10px; }
   .tag {
@@ -577,6 +578,30 @@ function splitStandbyForCallback(cbRange) {
   entries = entries.filter(e => !toRemove.includes(e.id)).concat(toAdd);
 }
 
+// Mirror of splitStandbyForCallback for the reverse order: if a new on-call
+// standby is added after a call-in that already exists, trim the new
+// standby's range around any overlapping call-ins instead of double-counting.
+// Returns an array of {start,end} ms fragments with the overlaps removed.
+function trimStandbyRangeAgainstCallbacks(range) {
+  if (!range) return [range];
+  let fragments = [{ start: range.start, end: range.end }];
+  entries.forEach(e => {
+    if (e.type !== "callback") return;
+    const cbRange = entryRangeMs(e.date, e.startTime, e.endTime);
+    if (!cbRange) return;
+    const next = [];
+    fragments.forEach(f => {
+      const overlapStart = Math.max(f.start, cbRange.start);
+      const overlapEnd = Math.min(f.end, cbRange.end);
+      if (overlapStart >= overlapEnd) { next.push(f); return; }
+      if (f.start < cbRange.start) next.push({ start: f.start, end: cbRange.start });
+      if (cbRange.end < f.end) next.push({ start: cbRange.end, end: f.end });
+    });
+    fragments = next;
+  });
+  return fragments;
+}
+
 function autoCalcHours() {
   const type = document.getElementById("entryType").value;
   if (type === "callback_cancelled") return;
@@ -804,6 +829,10 @@ function computeExpectedSummary(startDate, endDate) {
   return cats;
 }
 
+function isDuplicateEntry(entry) {
+  return entries.some(other => other.id !== entry.id && other.date === entry.date && other.hours === entry.hours);
+}
+
 function render() {
   const container = document.getElementById("weeksContainer");
   container.innerHTML = "";
@@ -851,6 +880,9 @@ function render() {
         el("div", { text: e.date + " — " + TYPE_INFO[e.type].label }),
         meta,
       ]);
+      if (isDuplicateEntry(e)) {
+        left.appendChild(el("div", { class: "dup-warning", text: "⚠ Possible duplicate — same date and hours as another entry" }));
+      }
 
       const editBtn = el("button", { class: "edit", text: "✎", title: "Edit" });
       editBtn.addEventListener("click", () => loadEntryForEdit(e.id));
@@ -1105,6 +1137,14 @@ async function init() {
         entries[idx] = { id: editingId, date, type, hours: parseFloat(hoursVal) || 0, diffMode, startTime, endTime, restViolation, mealSkipped };
       }
       cancelEdit();
+    } else if (type === "oncall" && startTime && endTime) {
+      const stRange = entryRangeMs(date, startTime, endTime);
+      const fragments = trimStandbyRangeAgainstCallbacks(stRange);
+      if (fragments.length === 0) {
+        alert("This on-call window is fully covered by an existing call-in entry — nothing new to add.");
+      } else {
+        fragments.forEach(f => entries.push(makeStandbyFragment(f.start, f.end)));
+      }
     } else {
       entries.push({ id: uid(), date, type, hours: parseFloat(hoursVal) || 0, diffMode, startTime, endTime, restViolation, mealSkipped });
     }
