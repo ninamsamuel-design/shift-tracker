@@ -878,10 +878,16 @@ function computeWeeks() {
   // callback's start time is <1h after the immediately preceding entry's
   // end time (chronologically, across day/week boundaries).
   const recalledMap = new Map();
+  const WORKED_TYPES = new Set(["shift", "callback", "callback_1hr", "extra_shift", "training"]);
   for (let i = 1; i < sorted.length; i++) {
     const cur = sorted[i];
     if (cur.type !== "callback" || !cur.startTime || !isValidTimeStr(cur.startTime)) continue;
-    const prevEnd = entryEndDateTime(sorted[i - 1]);
+    const prev = sorted[i - 1];
+    // Standby (on-call) transitioning directly into a callback is the
+    // normal, expected workflow, not a disruptive recall — only count a gap
+    // from a prior entry that was itself actively worked time.
+    if (!WORKED_TYPES.has(prev.type)) continue;
+    const prevEnd = entryEndDateTime(prev);
     const curStart = entryDateTime(cur.date, cur.startTime);
     if (!prevEnd || !curStart) continue;
     const gapMin = (curStart - prevEnd) / 60000;
