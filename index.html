@@ -184,7 +184,8 @@
 
   <div class="card">
     <h2>Backup / restore</h2>
-    <p class="type-note" style="margin-top:0;">Your rates and entries save automatically as you go. If this browser doesn't reliably keep data between visits (common when opening the file directly instead of through a server), download a backup here and load it back in next time.</p>
+    <p class="type-note" style="margin-top:0;">Your rates and entries save automatically as you go. If this browser doesn't reliably keep data between visits, download a backup here and load it back in next time.</p>
+    <p class="type-note" style="color:var(--pulse);">For more reliable saving — synced automatically across devices, no manual backups needed — sign in with your email (top right) instead of relying on this browser alone.</p>
     <div class="row-actions">
       <button class="btn-ghost" id="exportBtn">Download backup</button>
       <label class="btn-ghost" style="display:inline-flex; align-items:center; cursor:pointer;">
@@ -1029,6 +1030,8 @@ function updateTypeUI() {
   document.getElementById("typeNote").textContent = TYPE_INFO[type].note;
   const hoursInput = document.getElementById("entryHours");
   const diffField = document.getElementById("diffField");
+  const startInput = document.getElementById("entryStart");
+  const endInput = document.getElementById("entryEnd");
   if (type === "callback_cancelled") {
     hoursInput.disabled = true;
     hoursInput.placeholder = "n/a — flat payout";
@@ -1036,7 +1039,13 @@ function updateTypeUI() {
   } else {
     hoursInput.disabled = false;
     hoursInput.placeholder = "";
-    if (!hoursInput.value) hoursInput.value = (type === "oncall") ? "8" : (type === "training" ? "4" : ((type === "holiday" || type === "comp_used") ? "8" : "12"));
+    if (type === "shift" && !startInput.value && !endInput.value) {
+      startInput.value = "07:00";
+      endInput.value = "19:23";
+      autoCalcHours();
+    } else if (!hoursInput.value) {
+      hoursInput.value = (type === "oncall") ? "8" : (type === "training" ? "4" : ((type === "holiday" || type === "comp_used") ? "8" : "12"));
+    }
   }
   diffField.style.display = (type === "oncall" || type === "comp_used") ? "none" : "block";
   document.getElementById("timeFields").style.display = (type === "callback_cancelled" || type === "comp_used") ? "none" : "grid";
