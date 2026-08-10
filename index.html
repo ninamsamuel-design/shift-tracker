@@ -645,26 +645,52 @@ function autoCalcHours() {
   document.getElementById("entryHours").value = roundQuarter(netHours);
 }
 
-function autoDetectDifferential(dateStr, startStr, endStr) {
+const CALLBACK_TYPES = new Set(["callback", "callback_1hr"]);
+
+// Window-overlap hours for a shift, used two different ways depending on
+// entry type (see autoDetectDifferential and computeEntryBase):
+// callback-type entries use these to decide majority classification only;
+// regular shift-type entries use these BOTH for the qualifying threshold
+// and as the actual differential-eligible hours (proportional, not the
+// whole shift).
+function diffWindowHours(dateStr, startStr, endStr) {
   let start = roundToQuarterHour(timeToMin(startStr));
   let end = roundToQuarterHour(timeToMin(endStr));
   if (end <= start) end += 1440;
   const ov = (aS, aE, bS, bE) => Math.max(0, Math.min(aE, bE) - Math.max(aS, bS));
   const eveningHrs = ov(start, end, 1020, 1440) / 60;
   const nightHrs = (ov(start, end, 0, 480) + ov(start, end, 1440, 1920)) / 60;
+  return { eveningHrs, nightHrs };
+}
+
+function autoDetectDifferential(dateStr, startStr, endStr, entryType) {
+  let start = roundToQuarterHour(timeToMin(startStr));
+  let end = roundToQuarterHour(timeToMin(endStr));
+  if (end <= start) end += 1440;
   const dow0 = new Date(dateStr + "T00:00:00").getDay();
   const dow1 = end > 1440 ? (dow0 + 1) % 7 : null;
   const isWeekend = (dow0 === 0 || dow0 === 6) || (dow1 !== null && (dow1 === 0 || dow1 === 6));
   if (isWeekend) return "weekend";
-  // Confirmed against 3 real callback examples: a shift spanning BOTH the
-  // evening and night windows is classified as a WHOLE under whichever
-  // window holds the MAJORITY of its hours -- not split, and not requiring
-  // each window to independently reach 4h. E.g. 19:26-07:04 (4.57h evening +
-  // 7.07h night) posted entirely as Night differential; 17:30-00:30 (6.5h
-  // evening + 0.5h night) posted entirely as Evening differential.
-  if (nightHrs + eveningHrs >= 4) {
-    return nightHrs >= eveningHrs ? "night" : "evening";
+  const { eveningHrs, nightHrs } = diffWindowHours(dateStr, startStr, endStr);
+  if (CALLBACK_TYPES.has(entryType)) {
+    // Confirmed against 3 real callback examples: a callback spanning BOTH
+    // the evening and night windows is classified as a WHOLE under
+    // whichever window holds the MAJORITY of its hours -- not split, and
+    // not requiring each window to independently reach 4h. E.g.
+    // 19:26-07:04 (4.57h evening + 7.07h night) posted entirely as Night;
+    // 17:30-00:30 (6.5h evening + 0.5h night) posted entirely as Evening.
+    if (nightHrs + eveningHrs >= 4) return nightHrs >= eveningHrs ? "night" : "evening";
+    return "none";
   }
+  // Regular scheduled shifts: each window must independently reach 4+
+  // hours, and only that window's actual overlap hours are paid at the
+  // differential rate — not the whole shift. A confirmed real 14.5h shift
+  // (07:00-22:00, 5h evening overlap) got zero differential despite the
+  // overlap alone clearing 4h, so shift-type eligibility itself is still
+  // unconfirmed pending payroll's response — this only fixes how MUCH of
+  // the shift would be eligible if it does apply, not whether it does.
+  if (nightHrs >= 4) return "night";
+  if (eveningHrs >= 4) return "evening";
   return "none";
 }
 
@@ -673,7 +699,7 @@ function resolveDifferential(entry) {
   if (mode === "none") return "none";
   if (mode !== "auto") return mode;
   if (!entry.startTime || !entry.endTime) return "none";
-  return autoDetectDifferential(entry.date, entry.startTime, entry.endTime);
+  return autoDetectDifferential(entry.date, entry.startTime, entry.endTime, entry.type);
 }
 
 function diffRate(entry) {
@@ -724,8 +750,15 @@ function computeEntryBase(entry, priorRegularHours, recalledWithin1hr) {
       const diffPerHour = diffType === "evening" ? settings.eveningDiff
         : diffType === "night" ? settings.nightDiff
         : settings.weekendDiff;
-      diffPay = entry.hours * diffPerHour;
-      diffLine = { tag: "diff", label: entry.hours + "h " + diffType + " diff @ $" + diffPerHour.toFixed(2) + "/hr", amt: diffPay };
+      let diffHours = entry.hours;
+      // Regular shifts (not callbacks): only the actual window-overlap
+      // hours are differential-eligible, not the whole shift.
+      if (!CALLBACK_TYPES.has(entry.type) && diffType !== "weekend" && entry.startTime && entry.endTime) {
+        const { eveningHrs, nightHrs } = diffWindowHours(entry.date, entry.startTime, entry.endTime);
+        diffHours = Math.min(entry.hours, diffType === "evening" ? eveningHrs : nightHrs);
+      }
+      diffPay = diffHours * diffPerHour;
+      diffLine = { tag: "diff", label: roundQuarter(diffHours) + "h " + diffType + " diff @ $" + diffPerHour.toFixed(2) + "/hr", amt: diffPay };
     }
   }
   const addDiff = (result) => {
