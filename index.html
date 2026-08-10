@@ -268,7 +268,7 @@
     <div class="field" id="mealField" style="display:none;">
       <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
         <input type="checkbox" id="entryMealSkipped" style="width:auto;">
-        Meal break skipped this shift? (counts full hours + adds 1h missed-meal penalty pay)
+        Meal break skipped this shift? (you get paid for the 30 min instead of it being deducted)
       </label>
     </div>
     <div class="field" id="restField" style="display:none;">
@@ -718,14 +718,13 @@ function diffLabel(entry) {
 }
 
 function computeEntry(entry, priorRegularHours, recalledWithin1hr) {
-  const base = computeEntryBase(entry, priorRegularHours, recalledWithin1hr);
-  if (entry.mealSkipped) {
-    const rate = settings.baseRate + diffRate(entry);
-    const penalty = rate * 1;
-    base.pay += penalty;
-    base.lines.push({ tag: "reg", label: "1h missed-meal penalty", amt: penalty });
-  }
-  return base;
+  // A skipped meal break is already accounted for in the hours themselves —
+  // autoCalcHours() doesn't subtract the standard 30-min meal deduction when
+  // mealSkipped is checked, so you're already being paid for that half
+  // hour as worked time. There's no separate penalty payment on top of
+  // that; an earlier version of this app assumed a flat 1h bonus, but that
+  // wasn't confirmed and doesn't show up on real paystubs.
+  return computeEntryBase(entry, priorRegularHours, recalledWithin1hr);
 }
 
 const DIFF_ELIGIBLE_TYPES = new Set(["shift", "training", "callback", "callback_1hr", "extra_shift"]);
