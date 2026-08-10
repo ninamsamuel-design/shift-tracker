@@ -368,7 +368,7 @@ const TYPE_INFO = {
   comp_used: { label: "Compensatory time used", note: "Paid out at your regular rate for this period. Doesn't count toward OT accrual (it's paid leave, not worked time)." },
   callback: { label: "Called-in", note: "Under the 2-hour minimum: paid straight time for the full 2 hours. At or above 2 hours worked: full worked hours at 1.5x." },
   callback_1hr: { label: "Call-back within 1 hr of clock-out", note: "Goes straight to double time (2x) for all hours." },
-  callback_cancelled: { label: "Call-back, case cancelled", note: "Flat payout: straight time for the 2-hour minimum, regardless of hours entered." },
+  callback_cancelled: { label: "Call-back, case cancelled", note: "First 15 min at 1.5x, remaining time up to the 2-hour minimum at straight time — flat payout regardless of hours entered." },
   oncall: { label: "On-call standby", note: "Paid at the flat on-call rate; doesn't count toward OT. Log from your actual clock-out time. If you're called in with no break, log that portion as a shift/recall entry instead." },
 };
 
@@ -791,9 +791,17 @@ function computeEntryBase(entry, priorRegularHours, recalledWithin1hr) {
     return { pay, regularHoursAdded: 0, lines: [{ tag: "oncall", label: entry.hours + "h on-call", amt: pay }] };
   }
   if (entry.type === "callback_cancelled") {
-    const pay = rate * settings.callbackMinHours;
+    // First 15 min of a cancelled call-back is paid at 1.5x, the rest of
+    // the 2h minimum guarantee at straight time — not flat straight time
+    // for the whole 2 hours. Shown as regular + T50 premium-only to match
+    // how this posts on the real paystub (e.g. "2h regular + 0.25h T50").
+    const premiumHours = 0.25;
+    const regAmt = rate * settings.callbackMinHours;
+    const premiumAmt = premiumHours * 0.5 * rate;
+    const pay = regAmt + premiumAmt;
     return { pay, regularHoursAdded: 0, lines: [
-      { tag: "reg", label: settings.callbackMinHours + "h straight (cancelled)", amt: pay },
+      { tag: "reg", label: settings.callbackMinHours + "h regular (cancelled)", amt: regAmt },
+      { tag: "ot", label: premiumHours + "h T50 premium (cancelled, first 15 min @ 1.5x)", amt: premiumAmt },
     ] };
   }
   if (entry.type === "callback_1hr" || (entry.type === "callback" && recalledWithin1hr)) {
