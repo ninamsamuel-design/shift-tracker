@@ -656,8 +656,15 @@ function autoDetectDifferential(dateStr, startStr, endStr) {
   const dow1 = end > 1440 ? (dow0 + 1) % 7 : null;
   const isWeekend = (dow0 === 0 || dow0 === 6) || (dow1 !== null && (dow1 === 0 || dow1 === 6));
   if (isWeekend) return "weekend";
-  if (nightHrs >= 4) return "night";
-  if (eveningHrs >= 4) return "evening";
+  // Confirmed against 3 real callback examples: a shift spanning BOTH the
+  // evening and night windows is classified as a WHOLE under whichever
+  // window holds the MAJORITY of its hours -- not split, and not requiring
+  // each window to independently reach 4h. E.g. 19:26-07:04 (4.57h evening +
+  // 7.07h night) posted entirely as Night differential; 17:30-00:30 (6.5h
+  // evening + 0.5h night) posted entirely as Evening differential.
+  if (nightHrs + eveningHrs >= 4) {
+    return nightHrs >= eveningHrs ? "night" : "evening";
+  }
   return "none";
 }
 
@@ -684,8 +691,8 @@ function diffLabel(entry) {
   return entry.diffMode === "auto" ? label + " (auto)" : label;
 }
 
-function computeEntry(entry, priorRegularHours) {
-  const base = computeEntryBase(entry, priorRegularHours);
+function computeEntry(entry, priorRegularHours, recalledWithin1hr) {
+  const base = computeEntryBase(entry, priorRegularHours, recalledWithin1hr);
   if (entry.mealSkipped) {
     const rate = settings.baseRate + diffRate(entry);
     const penalty = rate * 1;
@@ -695,33 +702,9 @@ function computeEntry(entry, priorRegularHours) {
   return base;
 }
 
-// Hours of an entry that actually fall inside its differential window,
-// based on real clock times — NOT the whole shift. Confirmed against an old
-// EcoTime timecard (3/27/2026): a 14.5h shift only earned 7.0h of Evening
-// differential, not 14.5h, so differential is proportional to actual
-// window overlap, not a flat per-shift bump.
-function diffWindowHours(dateStr, startStr, endStr, diffType) {
-  if (diffType === "none" || !startStr || !endStr || !isValidTimeStr(startStr) || !isValidTimeStr(endStr)) return 0;
-  let start = roundToQuarterHour(timeToMin(startStr));
-  let end = roundToQuarterHour(timeToMin(endStr));
-  if (end <= start) end += 1440;
-  const ov = (aS, aE, bS, bE) => Math.max(0, Math.min(aE, bE) - Math.max(aS, bS));
-  if (diffType === "evening") return ov(start, end, 1020, 1440) / 60;
-  if (diffType === "night") return (ov(start, end, 0, 480) + ov(start, end, 1440, 1920)) / 60;
-  if (diffType === "weekend") {
-    const dow0 = new Date(dateStr + "T00:00:00").getDay();
-    const dow1 = (dow0 + 1) % 7;
-    let mins = 0;
-    if (dow0 === 0 || dow0 === 6) mins += ov(start, end, 0, 1440);
-    if (end > 1440 && (dow1 === 0 || dow1 === 6)) mins += ov(start, end, 1440, end);
-    return mins / 60;
-  }
-  return 0;
-}
-
 const DIFF_ELIGIBLE_TYPES = new Set(["shift", "training", "callback", "callback_1hr", "extra_shift"]);
 
-function computeEntryBase(entry, priorRegularHours) {
+function computeEntryBase(entry, priorRegularHours, recalledWithin1hr) {
   const rate = settings.baseRate;
   const otRate = rate * 1.5;
   const dtRate = rate * 2;
@@ -729,9 +712,10 @@ function computeEntryBase(entry, priorRegularHours) {
   // Differential is computed separately from base/OT/DT pay and added as its
   // own flat line — confirmed against a real paystub (Night Shift
   // Differential: 9.75h @ $5.00/hr = $48.75 flat, not multiplied by whatever
-  // OT/premium those same hours also earned elsewhere on the stub) and now
-  // also scoped to only the hours actually inside the window (see
-  // diffWindowHours above), not the full entry.
+  // OT/premium those same hours also earned elsewhere on the stub) — and
+  // applies to the entry's FULL hours once a type is determined, not a
+  // partial slice (see autoDetectDifferential's majority-window comment for
+  // why: real examples show the whole shift gets one differential type).
   let diffPay = 0;
   let diffLine = null;
   if (DIFF_ELIGIBLE_TYPES.has(entry.type)) {
@@ -740,14 +724,8 @@ function computeEntryBase(entry, priorRegularHours) {
       const diffPerHour = diffType === "evening" ? settings.eveningDiff
         : diffType === "night" ? settings.nightDiff
         : settings.weekendDiff;
-      const windowHours = diffWindowHours(entry.date, entry.startTime, entry.endTime, diffType);
-      // No start/end time entered (e.g. hours typed in manually): can't slice
-      // by clock time, so fall back to treating the whole entry as eligible.
-      const diffHours = (entry.startTime && entry.endTime) ? Math.min(entry.hours, windowHours) : entry.hours;
-      if (diffHours > 0) {
-        diffPay = diffHours * diffPerHour;
-        diffLine = { tag: "diff", label: roundQuarter(diffHours) + "h " + diffType + " diff @ $" + diffPerHour.toFixed(2) + "/hr", amt: diffPay };
-      }
+      diffPay = entry.hours * diffPerHour;
+      diffLine = { tag: "diff", label: entry.hours + "h " + diffType + " diff @ $" + diffPerHour.toFixed(2) + "/hr", amt: diffPay };
     }
   }
   const addDiff = (result) => {
@@ -786,9 +764,17 @@ function computeEntryBase(entry, priorRegularHours) {
       { tag: "reg", label: settings.callbackMinHours + "h straight (cancelled)", amt: pay },
     ] };
   }
-  if (entry.type === "callback_1hr") {
+  if (entry.type === "callback_1hr" || (entry.type === "callback" && recalledWithin1hr)) {
+    // Recalled within 1 hour of a prior punch-out — straight to 2x for all
+    // hours. "callback_1hr" is the manual type for this; recalledWithin1hr
+    // is the automatic fail-safe (computeWeeks detects the <1h gap from the
+    // immediately preceding entry's end time) so this isn't missed if the
+    // wrong type gets picked when logging the entry.
     const pay = entry.hours * dtRate;
-    return addDiff({ pay, regularHoursAdded: entry.hours, lines: [{ tag: "dt", label: entry.hours + "h @ 2x (recall <1h)", amt: pay }] });
+    const label = entry.type === "callback_1hr"
+      ? entry.hours + "h @ 2x (recall <1h)"
+      : entry.hours + "h @ 2x (auto-detected: recalled <1h after prior punch-out)";
+    return addDiff({ pay, regularHoursAdded: entry.hours, lines: [{ tag: "dt", label, amt: pay }] });
   }
 
   if (entry.type === "callback") {
@@ -868,6 +854,17 @@ function entryTimeSortKey(e) {
   return (e.startTime && isValidTimeStr(e.startTime)) ? timeToMin(e.startTime) : -1;
 }
 
+function entryDateTime(dateStr, timeStr) {
+  if (!timeStr || !isValidTimeStr(timeStr)) return null;
+  return new Date(dateStr + "T" + timeStr + ":00");
+}
+function entryEndDateTime(entry) {
+  const start = entryDateTime(entry.date, entry.startTime);
+  const end = entryDateTime(entry.date, entry.endTime);
+  if (!start || !end) return null;
+  return end <= start ? new Date(end.getTime() + 24 * 60 * 60 * 1000) : end;
+}
+
 function computeWeeks() {
   const byWeek = {};
   const sorted = [...entries].sort((a, b) => {
@@ -875,6 +872,22 @@ function computeWeeks() {
     if (dateCmp !== 0) return dateCmp;
     return entryTimeSortKey(a) - entryTimeSortKey(b);
   });
+
+  // Fail-safe for the "called back within 1 hour" 2x rule: rather than
+  // relying on the right type being hand-picked, check whether this
+  // callback's start time is <1h after the immediately preceding entry's
+  // end time (chronologically, across day/week boundaries).
+  const recalledMap = new Map();
+  for (let i = 1; i < sorted.length; i++) {
+    const cur = sorted[i];
+    if (cur.type !== "callback" || !cur.startTime || !isValidTimeStr(cur.startTime)) continue;
+    const prevEnd = entryEndDateTime(sorted[i - 1]);
+    const curStart = entryDateTime(cur.date, cur.startTime);
+    if (!prevEnd || !curStart) continue;
+    const gapMin = (curStart - prevEnd) / 60000;
+    if (gapMin > 0 && gapMin < 60) recalledMap.set(cur.id, true);
+  }
+
   sorted.forEach(e => {
     const wk = getWeekStart(e.date);
     if (!byWeek[wk]) byWeek[wk] = { start: wk, entries: [], total: 0 };
@@ -884,7 +897,7 @@ function computeWeeks() {
     let running = 0;
     const weekEntries = sorted.filter(e => getWeekStart(e.date) === wk);
     weekEntries.forEach(e => {
-      const result = computeEntry(e, running);
+      const result = computeEntry(e, running, recalledMap.get(e.id) || false);
       running += result.regularHoursAdded;
       byWeek[wk].entries.push({ ...e, result });
       byWeek[wk].total += result.pay;
