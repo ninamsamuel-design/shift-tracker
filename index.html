@@ -767,9 +767,17 @@ function el(tag, opts, children) {
   return e;
 }
 
+function entryTimeSortKey(e) {
+  return (e.startTime && isValidTimeStr(e.startTime)) ? timeToMin(e.startTime) : -1;
+}
+
 function computeWeeks() {
   const byWeek = {};
-  const sorted = [...entries].sort((a, b) => a.date.localeCompare(b.date));
+  const sorted = [...entries].sort((a, b) => {
+    const dateCmp = a.date.localeCompare(b.date);
+    if (dateCmp !== 0) return dateCmp;
+    return entryTimeSortKey(a) - entryTimeSortKey(b);
+  });
   sorted.forEach(e => {
     const wk = getWeekStart(e.date);
     if (!byWeek[wk]) byWeek[wk] = { start: wk, entries: [], total: 0 };
@@ -878,58 +886,137 @@ function render() {
       return;
     }
 
+    // Same-day on-call standby entries (e.g. split around a call-in) display
+    // as one combined row instead of separate fragments, for readability.
+    // The underlying entries stay separate so editing/re-splitting still works.
+    const displayItems = [];
+    const oncallGroupByDate = {};
     wk.entries.forEach(e => {
-      const meta = el("div", { class: "meta" });
-      e.result.lines.forEach(l => meta.appendChild(el("span", { class: "tag tag-" + l.tag, text: l.label })));
-      if (resolveDifferential(e) !== "none" && e.type !== "callback_cancelled" && e.type !== "oncall" && e.type !== "comp_used") {
-        meta.appendChild(el("span", { class: "tag tag-diff", text: "+" + diffLabel(e) }));
+      if (e.type === "oncall") {
+        let group = oncallGroupByDate[e.date];
+        if (!group) {
+          group = { isGroup: true, date: e.date, members: [] };
+          oncallGroupByDate[e.date] = group;
+          displayItems.push(group);
+        }
+        group.members.push(e);
+      } else {
+        displayItems.push({ isGroup: false, entry: e });
+      }
+    });
+
+    displayItems.forEach(item => {
+      if (item.isGroup && item.members.length === 1) item = { isGroup: false, entry: item.members[0] };
+
+      if (!item.isGroup) {
+        const e = item.entry;
+        const meta = el("div", { class: "meta" });
+        e.result.lines.forEach(l => meta.appendChild(el("span", { class: "tag tag-" + l.tag, text: l.label })));
+        if (resolveDifferential(e) !== "none" && e.type !== "callback_cancelled" && e.type !== "oncall" && e.type !== "comp_used") {
+          meta.appendChild(el("span", { class: "tag tag-diff", text: "+" + diffLabel(e) }));
+        }
+
+        const isExpanded = expandedEntryIds.has(e.id);
+        const left = el("div", { class: "entry-left" }, [
+          el("div", {}, [
+            el("span", { class: "arrow", text: isExpanded ? "▾" : "▸" }),
+            el("span", { text: e.date + " — " + TYPE_INFO[e.type].label }),
+          ]),
+          meta,
+        ]);
+        left.addEventListener("click", () => {
+          if (isExpanded) expandedEntryIds.delete(e.id); else expandedEntryIds.add(e.id);
+          render();
+        });
+        if (isDuplicateEntry(e)) {
+          left.appendChild(el("div", { class: "dup-warning", text: "⚠ Possible duplicate — same date and hours as another entry" }));
+        }
+        if (isExpanded) {
+          const details = el("div", { class: "entry-details" });
+          if (e.startTime) details.appendChild(el("div", { text: "Start: " + e.startTime }));
+          if (e.endTime) details.appendChild(el("div", { text: "End: " + e.endTime }));
+          details.appendChild(el("div", { text: "Hours entered: " + e.hours }));
+          if (e.diffMode && e.diffMode !== "none") details.appendChild(el("div", { text: "Differential: " + e.diffMode }));
+          if (e.mealSkipped) details.appendChild(el("div", { text: "Meal break skipped" }));
+          if (e.restViolation) details.appendChild(el("div", { text: "<6h rest (1.5x)" }));
+          left.appendChild(details);
+        }
+
+        const editBtn = el("button", { class: "edit", text: "✎", title: "Edit" });
+        editBtn.addEventListener("click", () => loadEntryForEdit(e.id));
+
+        const delBtn = el("button", { class: "del", text: "✕", title: "Remove" });
+        delBtn.addEventListener("click", () => {
+          if (!confirm("Are you sure you want to delete this entry?")) return;
+          entries = entries.filter(x => x.id !== e.id);
+          if (editingId === e.id) cancelEdit();
+          persistEntries();
+          render();
+        });
+
+        const right = el("div", { class: "right" }, [
+          el("span", { class: "amt", text: money(e.result.pay) }),
+          editBtn,
+          delBtn,
+        ]);
+
+        const rowEl = el("div", { class: "entry" + (editingId === e.id ? " entry-editing" : "") }, [left, right]);
+        block.appendChild(rowEl);
+        return;
       }
 
-      const isExpanded = expandedEntryIds.has(e.id);
+      // Combined on-call standby row for this date (2+ underlying blocks)
+      const members = item.members;
+      const totalHours = members.reduce((s, m) => s + m.hours, 0);
+      const totalPay = members.reduce((s, m) => s + m.result.pay, 0);
+      const isExpanded = members.some(m => expandedEntryIds.has(m.id));
+
+      const meta = el("div", { class: "meta" }, [
+        el("span", { class: "tag tag-oncall", text: roundQuarter(totalHours) + "H ON-CALL" }),
+      ]);
+
       const left = el("div", { class: "entry-left" }, [
         el("div", {}, [
           el("span", { class: "arrow", text: isExpanded ? "▾" : "▸" }),
-          el("span", { text: e.date + " — " + TYPE_INFO[e.type].label }),
+          el("span", { text: item.date + " — On-call standby" }),
         ]),
         meta,
       ]);
       left.addEventListener("click", () => {
-        if (isExpanded) expandedEntryIds.delete(e.id); else expandedEntryIds.add(e.id);
+        if (isExpanded) members.forEach(m => expandedEntryIds.delete(m.id));
+        else members.forEach(m => expandedEntryIds.add(m.id));
         render();
       });
-      if (isDuplicateEntry(e)) {
-        left.appendChild(el("div", { class: "dup-warning", text: "⚠ Possible duplicate — same date and hours as another entry" }));
-      }
+
       if (isExpanded) {
         const details = el("div", { class: "entry-details" });
-        if (e.startTime) details.appendChild(el("div", { text: "Start: " + e.startTime }));
-        if (e.endTime) details.appendChild(el("div", { text: "End: " + e.endTime }));
-        details.appendChild(el("div", { text: "Hours entered: " + e.hours }));
-        if (e.diffMode && e.diffMode !== "none") details.appendChild(el("div", { text: "Differential: " + e.diffMode }));
-        if (e.mealSkipped) details.appendChild(el("div", { text: "Meal break skipped" }));
-        if (e.restViolation) details.appendChild(el("div", { text: "<6h rest (1.5x)" }));
+        members.forEach(m => {
+          const line = el("div", { style: "display:flex; align-items:center; gap:8px; margin-top:2px;" });
+          const timeLabel = (m.startTime && m.endTime) ? (m.startTime + "–" + m.endTime) : (m.hours + "h");
+          line.appendChild(el("span", { text: timeLabel + " (" + m.hours + "h) — " + money(m.result.pay) }));
+          const miniEdit = el("button", { class: "edit", text: "✎", title: "Edit this block" });
+          miniEdit.addEventListener("click", (ev) => { ev.stopPropagation(); loadEntryForEdit(m.id); });
+          const miniDel = el("button", { class: "del", text: "✕", title: "Remove this block" });
+          miniDel.addEventListener("click", (ev) => {
+            ev.stopPropagation();
+            if (!confirm("Are you sure you want to delete this on-call block?")) return;
+            entries = entries.filter(x => x.id !== m.id);
+            if (editingId === m.id) cancelEdit();
+            persistEntries();
+            render();
+          });
+          line.appendChild(miniEdit);
+          line.appendChild(miniDel);
+          details.appendChild(line);
+        });
         left.appendChild(details);
       }
 
-      const editBtn = el("button", { class: "edit", text: "✎", title: "Edit" });
-      editBtn.addEventListener("click", () => loadEntryForEdit(e.id));
-
-      const delBtn = el("button", { class: "del", text: "✕", title: "Remove" });
-      delBtn.addEventListener("click", () => {
-        if (!confirm("Are you sure you want to delete this entry?")) return;
-        entries = entries.filter(x => x.id !== e.id);
-        if (editingId === e.id) cancelEdit();
-        persistEntries();
-        render();
-      });
-
       const right = el("div", { class: "right" }, [
-        el("span", { class: "amt", text: money(e.result.pay) }),
-        editBtn,
-        delBtn,
+        el("span", { class: "amt", text: money(totalPay) }),
       ]);
 
-      const rowEl = el("div", { class: "entry" + (editingId === e.id ? " entry-editing" : "") }, [left, right]);
+      const rowEl = el("div", { class: "entry" }, [left, right]);
       block.appendChild(rowEl);
     });
 
