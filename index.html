@@ -94,6 +94,7 @@
   .settings-toggle { font-family: var(--mono); font-size: 11.5px; color: var(--ink-soft); background: none; border: none; cursor: pointer; text-decoration: underline; padding: 0; }
 
   .type-note { font-size: 12px; color: var(--ink-soft); margin-top: -6px; margin-bottom: 12px; line-height: 1.5; }
+  .date-dow { font-size: 12px; color: var(--ink-soft); margin-top: 4px; font-weight: 600; }
 
   .week-block { margin-bottom: 14px; }
   .week-header {
@@ -246,6 +247,7 @@
       <div class="field">
         <label>Date</label>
         <input type="date" id="entryDate">
+        <div class="date-dow" id="entryDateDow"></div>
       </div>
       <div class="field">
         <label>Type</label>
@@ -322,10 +324,12 @@
       <div class="field">
         <label>Pay period start</label>
         <input type="date" id="verifyStart">
+        <div class="date-dow" id="verifyStartDow"></div>
       </div>
       <div class="field">
         <label>Pay period end</label>
         <input type="date" id="verifyEnd">
+        <div class="date-dow" id="verifyEndDow"></div>
       </div>
     </div>
     <div id="expectedSummary"></div>
@@ -482,6 +486,16 @@ function uid() { return Math.random().toString(36).slice(2, 10); }
 function money(n) { return n.toLocaleString(undefined, { style: "currency", currency: "USD" }); }
 function localDateStr(d) {
   return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+}
+function dowLabel(dateStr) {
+  if (!dateStr) return "";
+  const d = new Date(dateStr + "T00:00:00");
+  if (isNaN(d)) return "";
+  return d.toLocaleDateString(undefined, { weekday: "long" });
+}
+function updateDateDow(inputId, labelId) {
+  const el = document.getElementById(labelId);
+  if (el) el.textContent = dowLabel(document.getElementById(inputId).value);
 }
 function getWeekStart(dateStr) {
   const d = new Date(dateStr + "T00:00:00");
@@ -1063,6 +1077,7 @@ function loadEntryForEdit(id) {
   if (!e) return;
   editingId = id;
   document.getElementById("entryDate").value = e.date;
+  updateDateDow("entryDate", "entryDateDow");
   document.getElementById("entryType").value = e.type;
   document.getElementById("entryHours").value = e.hours;
   document.getElementById("entryDiff").value = e.diffMode || "none";
@@ -1103,6 +1118,7 @@ function cancelEdit() {
   document.getElementById("entryMealSkipped").checked = false;
   document.getElementById("entryDiff").value = "auto";
   document.getElementById("entryDate").value = localDateStr(new Date());
+  updateDateDow("entryDate", "entryDateDow");
   updateTypeUI();
   render();
 }
@@ -1195,6 +1211,7 @@ async function init() {
 
   loadSettingsUI();
   document.getElementById("entryDate").value = localDateStr(new Date());
+  updateDateDow("entryDate", "entryDateDow");
   updateTypeUI();
   render();
 
@@ -1284,6 +1301,9 @@ async function init() {
     showAddBtnFeedback(wasEditing ? "Saved \u2713" : "Added \u2713");
   });
 
+  document.getElementById("entryDate").addEventListener("input", () => updateDateDow("entryDate", "entryDateDow"));
+  document.getElementById("verifyStart").addEventListener("input", () => updateDateDow("verifyStart", "verifyStartDow"));
+  document.getElementById("verifyEnd").addEventListener("input", () => updateDateDow("verifyEnd", "verifyEndDow"));
   document.getElementById("verifyStart").addEventListener("change", renderExpectedSummary);
   document.getElementById("verifyEnd").addEventListener("change", renderExpectedSummary);
 
