@@ -1238,8 +1238,8 @@ async function init() {
   document.getElementById("entryType").addEventListener("change", updateTypeUI);
   attachTimeAutoFormat(document.getElementById("entryStart"));
   attachTimeAutoFormat(document.getElementById("entryEnd"));
-  document.getElementById("entryStart").addEventListener("blur", autoCalcHours);
-  document.getElementById("entryEnd").addEventListener("blur", autoCalcHours);
+  document.getElementById("entryStart").addEventListener("input", autoCalcHours);
+  document.getElementById("entryEnd").addEventListener("input", autoCalcHours);
   document.getElementById("entryMealSkipped").addEventListener("change", autoCalcHours);
 
   document.getElementById("cancelEditBtn").addEventListener("click", cancelEdit);
