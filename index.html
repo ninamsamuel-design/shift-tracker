@@ -695,10 +695,65 @@ function computeEntry(entry, priorRegularHours) {
   return base;
 }
 
+// Hours of an entry that actually fall inside its differential window,
+// based on real clock times — NOT the whole shift. Confirmed against an old
+// EcoTime timecard (3/27/2026): a 14.5h shift only earned 7.0h of Evening
+// differential, not 14.5h, so differential is proportional to actual
+// window overlap, not a flat per-shift bump.
+function diffWindowHours(dateStr, startStr, endStr, diffType) {
+  if (diffType === "none" || !startStr || !endStr || !isValidTimeStr(startStr) || !isValidTimeStr(endStr)) return 0;
+  let start = roundToQuarterHour(timeToMin(startStr));
+  let end = roundToQuarterHour(timeToMin(endStr));
+  if (end <= start) end += 1440;
+  const ov = (aS, aE, bS, bE) => Math.max(0, Math.min(aE, bE) - Math.max(aS, bS));
+  if (diffType === "evening") return ov(start, end, 1020, 1440) / 60;
+  if (diffType === "night") return (ov(start, end, 0, 480) + ov(start, end, 1440, 1920)) / 60;
+  if (diffType === "weekend") {
+    const dow0 = new Date(dateStr + "T00:00:00").getDay();
+    const dow1 = (dow0 + 1) % 7;
+    let mins = 0;
+    if (dow0 === 0 || dow0 === 6) mins += ov(start, end, 0, 1440);
+    if (end > 1440 && (dow1 === 0 || dow1 === 6)) mins += ov(start, end, 1440, end);
+    return mins / 60;
+  }
+  return 0;
+}
+
+const DIFF_ELIGIBLE_TYPES = new Set(["shift", "training", "callback", "callback_1hr", "extra_shift"]);
+
 function computeEntryBase(entry, priorRegularHours) {
-  const rate = settings.baseRate + diffRate(entry);
+  const rate = settings.baseRate;
   const otRate = rate * 1.5;
   const dtRate = rate * 2;
+
+  // Differential is computed separately from base/OT/DT pay and added as its
+  // own flat line — confirmed against a real paystub (Night Shift
+  // Differential: 9.75h @ $5.00/hr = $48.75 flat, not multiplied by whatever
+  // OT/premium those same hours also earned elsewhere on the stub) and now
+  // also scoped to only the hours actually inside the window (see
+  // diffWindowHours above), not the full entry.
+  let diffPay = 0;
+  let diffLine = null;
+  if (DIFF_ELIGIBLE_TYPES.has(entry.type)) {
+    const diffType = resolveDifferential(entry);
+    if (diffType !== "none") {
+      const diffPerHour = diffType === "evening" ? settings.eveningDiff
+        : diffType === "night" ? settings.nightDiff
+        : settings.weekendDiff;
+      const windowHours = diffWindowHours(entry.date, entry.startTime, entry.endTime, diffType);
+      // No start/end time entered (e.g. hours typed in manually): can't slice
+      // by clock time, so fall back to treating the whole entry as eligible.
+      const diffHours = (entry.startTime && entry.endTime) ? Math.min(entry.hours, windowHours) : entry.hours;
+      if (diffHours > 0) {
+        diffPay = diffHours * diffPerHour;
+        diffLine = { tag: "diff", label: roundQuarter(diffHours) + "h " + diffType + " diff @ $" + diffPerHour.toFixed(2) + "/hr", amt: diffPay };
+      }
+    }
+  }
+  const addDiff = (result) => {
+    if (diffLine) { result.pay += diffPay; result.lines.push(diffLine); }
+    return result;
+  };
 
   if (entry.type === "extra_shift") {
     // Best-guess model, unconfirmed: flat 1.5x total (per charge nurse's
@@ -707,10 +762,10 @@ function computeEntryBase(entry, priorRegularHours) {
     const pay = entry.hours * otRate;
     const regPortion = entry.hours * rate;
     const esipPortion = pay - regPortion;
-    return { pay, regularHoursAdded: entry.hours, lines: [
+    return addDiff({ pay, regularHoursAdded: entry.hours, lines: [
       { tag: "reg", label: entry.hours + "h regular (extra shift)", amt: regPortion },
       { tag: "ot", label: entry.hours + "h ESIP premium (unconfirmed)", amt: esipPortion },
-    ] };
+    ] });
   }
 
   if (entry.type === "holiday" || entry.type === "comp_used" || entry.type === "training") {
@@ -718,7 +773,7 @@ function computeEntryBase(entry, priorRegularHours) {
     // how many hours or what else happened that day/week.
     const pay = entry.hours * rate;
     const labelMap = { holiday: "h holiday pay", comp_used: "h comp time used", training: "h training pay" };
-    return { pay, regularHoursAdded: 0, lines: [{ tag: "reg", label: entry.hours + labelMap[entry.type], amt: pay }] };
+    return addDiff({ pay, regularHoursAdded: 0, lines: [{ tag: "reg", label: entry.hours + labelMap[entry.type], amt: pay }] });
   }
 
   if (entry.type === "oncall") {
@@ -733,7 +788,7 @@ function computeEntryBase(entry, priorRegularHours) {
   }
   if (entry.type === "callback_1hr") {
     const pay = entry.hours * dtRate;
-    return { pay, regularHoursAdded: entry.hours, lines: [{ tag: "dt", label: entry.hours + "h @ 2x (recall <1h)", amt: pay }] };
+    return addDiff({ pay, regularHoursAdded: entry.hours, lines: [{ tag: "dt", label: entry.hours + "h @ 2x (recall <1h)", amt: pay }] });
   }
 
   if (entry.type === "callback") {
@@ -754,7 +809,7 @@ function computeEntryBase(entry, priorRegularHours) {
     const label = underMin
       ? hours + "h @ straight time (call-in minimum, under " + settings.callbackMinHours + "h worked)"
       : hours + "h @ 1.5x (call-in)";
-    return { pay, regularHoursAdded: hours, lines: [{ tag: underMin ? "reg" : "ot", label, amt: pay }] };
+    return addDiff({ pay, regularHoursAdded: hours, lines: [{ tag: underMin ? "reg" : "ot", label, amt: pay }] });
   }
 
   let hours = entry.hours;
@@ -791,7 +846,7 @@ function computeEntryBase(entry, priorRegularHours) {
   if (weeklyOT > 0) { const amt = weeklyOT * otRate; pay += amt; lines.push({ tag: "ot", label: weeklyOT + "h @ 1.5x (weekly OT)", amt }); }
   if (dailyDT > 0) { const amt = dailyDT * dtRate; pay += amt; lines.push({ tag: "dt", label: dailyDT + "h @ 2x (>12h shift)", amt }); }
 
-  return { pay, regularHoursAdded: dailyRegular, lines };
+  return addDiff({ pay, regularHoursAdded: dailyRegular, lines });
 }
 
 function el(tag, opts, children) {
@@ -850,12 +905,13 @@ function computeExpectedSummary(startDate, endDate) {
     wk.entries.forEach(e => {
       if (e.date < startDate || e.date > endDate) return;
       cats.pay += e.result.pay;
-      const diffEligible = e.type === "shift" || e.type === "training" || e.type === "callback" || e.type === "callback_1hr" || e.type === "extra_shift";
-      if (diffEligible) {
+      const diffLine = e.result.lines.find(l => l.tag === "diff");
+      if (diffLine) {
+        const diffHours = parseFloat(diffLine.label);
         const diffType = resolveDifferential(e);
-        if (diffType === "evening") cats.eveningDiff += e.hours;
-        if (diffType === "night") cats.nightDiff += e.hours;
-        if (diffType === "weekend") cats.weekendDiff += e.hours;
+        if (diffType === "evening") cats.eveningDiff += diffHours;
+        if (diffType === "night") cats.nightDiff += diffHours;
+        if (diffType === "weekend") cats.weekendDiff += diffHours;
       }
 
       if (e.type === "oncall") { cats.onCallStandby += e.hours; return; }
@@ -954,9 +1010,6 @@ function render() {
         const e = item.entry;
         const meta = el("div", { class: "meta" });
         e.result.lines.forEach(l => meta.appendChild(el("span", { class: "tag tag-" + l.tag, text: l.label })));
-        if (resolveDifferential(e) !== "none" && e.type !== "callback_cancelled" && e.type !== "oncall" && e.type !== "comp_used") {
-          meta.appendChild(el("span", { class: "tag tag-diff", text: "+" + diffLabel(e) }));
-        }
 
         const isExpanded = expandedEntryIds.has(e.id);
         const left = el("div", { class: "entry-left" }, [
