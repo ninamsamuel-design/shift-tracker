@@ -768,10 +768,25 @@ function computeEntryBase(entry, priorRegularHours) {
   const lines = [];
   let pay = 0;
   if (trueRegular > 0) {
-    const rr = entry.restViolation ? otRate : rate;
-    const amt = trueRegular * rr;
-    pay += amt;
-    lines.push({ tag: entry.restViolation ? "ot" : "reg", label: trueRegular + "h" + (entry.restViolation ? " @ 1.5x (<6h rest)" : " regular"), amt });
+    if (entry.restViolation) {
+      // Per PTU manager email: a <6h-rest day doesn't post as one 1.5x line on
+      // the real paystub. HTS enters the base hours as ordinary Regular Pay,
+      // plus a separate "OTS – Rest Between Shifts" line for HALF those hours
+      // (the incremental premium) to make the whole shift work out to 1.5x.
+      // Same total dollars either way — this just matches how it'll actually
+      // appear on the paystub, and gives the exact pay-code name to reference
+      // when filing the Update Hours request with HTS.
+      const regAmt = trueRegular * rate;
+      const premiumHours = trueRegular * 0.5;
+      const premiumAmt = premiumHours * rate;
+      pay += regAmt + premiumAmt;
+      lines.push({ tag: "reg", label: trueRegular + "h regular", amt: regAmt });
+      lines.push({ tag: "ot", label: premiumHours + "h OTS – Rest Between Shifts (<6h rest)", amt: premiumAmt });
+    } else {
+      const amt = trueRegular * rate;
+      pay += amt;
+      lines.push({ tag: "reg", label: trueRegular + "h regular", amt });
+    }
   }
   if (weeklyOT > 0) { const amt = weeklyOT * otRate; pay += amt; lines.push({ tag: "ot", label: weeklyOT + "h @ 1.5x (weekly OT)", amt }); }
   if (dailyDT > 0) { const amt = dailyDT * dtRate; pay += amt; lines.push({ tag: "dt", label: dailyDT + "h @ 2x (>12h shift)", amt }); }
@@ -1162,9 +1177,9 @@ function renderExpectedSummary() {
   if (!start || !end) { box.innerHTML = ""; return; }
   const s = computeExpectedSummary(start, end);
   const rows = [
-    ["Regular", s.regular], ["Weekly OT (1.5x)", s.weeklyOT], ["Rest-violation OT (1.5x)", s.restOT],
+    ["Regular", s.regular], ["Weekly OT (1.5x)", s.weeklyOT], ["OTS – Rest Between Shifts", s.restOT],
     ["Daily double time (2x)", s.dailyDT], ["Recall double time (2x)", s.recallDT],
-    ["On-call standby", s.onCallStandby], ["Call-in, straight (\u22642h)", s.callInStraight],
+    ["On-call standby", s.onCallStandby], ["Call-in, straight (≤2h)", s.callInStraight],
     ["Call-in, premium (1.5x)", s.callInPremium], ["Training", s.training], ["Holiday", s.holiday],
     ["Extra shift (ESIP, unconfirmed)", s.extraShift],
     ["Comp time used", s.compUsed], ["Evening diff", s.eveningDiff], ["Night diff", s.nightDiff], ["Weekend diff", s.weekendDiff],
@@ -1310,7 +1325,7 @@ async function init() {
     persistEntries();
     render();
     renderExpectedSummary();
-    showAddBtnFeedback(wasEditing ? "Saved \u2713" : "Added \u2713");
+    showAddBtnFeedback(wasEditing ? "Saved ✓" : "Added ✓");
   });
 
   document.getElementById("entryDate").addEventListener("input", () => updateDateDow("entryDate", "entryDateDow"));
