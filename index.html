@@ -104,8 +104,8 @@
     cursor: pointer;
   }
   .week-header .label { font-family: var(--mono); font-size: 12px; color: var(--ink-soft); }
-  .week-header .arrow { display: inline-block; width: 1em; color: var(--pulse); }
   .week-header .total { font-family: var(--mono); font-size: 16px; font-weight: 600; }
+  .arrow { display: inline-block; width: 1em; color: var(--pulse); }
 
   .entry {
     display: flex; justify-content: space-between; align-items: center;
@@ -114,6 +114,8 @@
   }
   .entry:last-child { border-bottom: none; }
   .entry .meta { color: var(--ink-soft); font-size: 12px; margin-top: 4px; }
+  .entry-left { cursor: pointer; }
+  .entry-details { color: var(--ink-soft); font-size: 12px; margin-top: 6px; line-height: 1.6; }
   .dup-warning { color: var(--amber); font-size: 12px; margin-top: 4px; }
   .entry .right { display: flex; align-items: center; }
   .entry .amt { font-family: var(--mono); font-weight: 600; white-space: nowrap; margin-left: 10px; }
@@ -305,7 +307,10 @@
   </div>
 
   <div class="card">
-    <h2>Weekly totals</h2>
+    <div class="card-head">
+      <h2 style="margin:0;">Weekly totals</h2>
+      <button class="settings-toggle" id="expandAllToggle">expand all</button>
+    </div>
     <div id="weeksContainer"></div>
   </div>
 
@@ -470,6 +475,7 @@ let settings = { ...DEFAULT_SETTINGS };
 let entries = [];
 let editingId = null;
 let savedWeeks = [];
+let expandedEntryIds = new Set();
 
 function uid() { return Math.random().toString(36).slice(2, 10); }
 function money(n) { return n.toLocaleString(undefined, { style: "currency", currency: "USD" }); }
@@ -837,6 +843,9 @@ function render() {
   const container = document.getElementById("weeksContainer");
   container.innerHTML = "";
 
+  const allExpanded = entries.length > 0 && entries.every(e => expandedEntryIds.has(e.id));
+  document.getElementById("expandAllToggle").textContent = allExpanded ? "collapse all" : "expand all";
+
   const orderedWeeks = computeWeeks().reverse();
 
   if (orderedWeeks.length === 0) {
@@ -876,12 +885,30 @@ function render() {
         meta.appendChild(el("span", { class: "tag tag-diff", text: "+" + diffLabel(e) }));
       }
 
-      const left = el("div", {}, [
-        el("div", { text: e.date + " — " + TYPE_INFO[e.type].label }),
+      const isExpanded = expandedEntryIds.has(e.id);
+      const left = el("div", { class: "entry-left" }, [
+        el("div", {}, [
+          el("span", { class: "arrow", text: isExpanded ? "▾" : "▸" }),
+          el("span", { text: e.date + " — " + TYPE_INFO[e.type].label }),
+        ]),
         meta,
       ]);
+      left.addEventListener("click", () => {
+        if (isExpanded) expandedEntryIds.delete(e.id); else expandedEntryIds.add(e.id);
+        render();
+      });
       if (isDuplicateEntry(e)) {
         left.appendChild(el("div", { class: "dup-warning", text: "⚠ Possible duplicate — same date and hours as another entry" }));
+      }
+      if (isExpanded) {
+        const details = el("div", { class: "entry-details" });
+        if (e.startTime) details.appendChild(el("div", { text: "Start: " + e.startTime }));
+        if (e.endTime) details.appendChild(el("div", { text: "End: " + e.endTime }));
+        details.appendChild(el("div", { text: "Hours entered: " + e.hours }));
+        if (e.diffMode && e.diffMode !== "none") details.appendChild(el("div", { text: "Differential: " + e.diffMode }));
+        if (e.mealSkipped) details.appendChild(el("div", { text: "Meal break skipped" }));
+        if (e.restViolation) details.appendChild(el("div", { text: "<6h rest (1.5x)" }));
+        left.appendChild(details);
       }
 
       const editBtn = el("button", { class: "edit", text: "✎", title: "Edit" });
@@ -1080,6 +1107,13 @@ async function init() {
     const isHidden = panel.style.display === "none";
     panel.style.display = isHidden ? "grid" : "none";
     document.getElementById("settingsToggle").textContent = isHidden ? "hide" : "edit rates";
+  });
+
+  document.getElementById("expandAllToggle").addEventListener("click", () => {
+    const allExpanded = entries.length > 0 && entries.every(e => expandedEntryIds.has(e.id));
+    expandedEntryIds = allExpanded ? new Set() : new Set(entries.map(e => e.id));
+    document.getElementById("expandAllToggle").textContent = allExpanded ? "expand all" : "collapse all";
+    render();
   });
 
   ["baseRate", "onCallRate", "eveningDiff", "nightDiff", "weekendDiff", "callbackMinHours"].forEach(id => {
