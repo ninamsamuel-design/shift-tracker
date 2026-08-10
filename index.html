@@ -493,6 +493,12 @@ function dowLabel(dateStr) {
   if (isNaN(d)) return "";
   return d.toLocaleDateString(undefined, { weekday: "long" });
 }
+function dowShort(dateStr) {
+  if (!dateStr) return "";
+  const d = new Date(dateStr + "T00:00:00");
+  if (isNaN(d)) return "";
+  return d.toLocaleDateString(undefined, { weekday: "short" });
+}
 function updateDateDow(inputId, labelId) {
   const el = document.getElementById(labelId);
   if (el) el.textContent = dowLabel(document.getElementById(inputId).value);
@@ -935,7 +941,7 @@ function render() {
         const left = el("div", { class: "entry-left" }, [
           el("div", {}, [
             el("span", { class: "arrow", text: isExpanded ? "▾" : "▸" }),
-            el("span", { text: e.date + " — " + TYPE_INFO[e.type].label }),
+            el("span", { text: e.date + " (" + dowShort(e.date) + ") — " + TYPE_INFO[e.type].label }),
           ]),
           meta,
         ]);
@@ -993,7 +999,7 @@ function render() {
       const left = el("div", { class: "entry-left" }, [
         el("div", {}, [
           el("span", { class: "arrow", text: isExpanded ? "▾" : "▸" }),
-          el("span", { text: item.date + " — On-call standby" }),
+          el("span", { text: item.date + " (" + dowShort(item.date) + ") — On-call standby" }),
         ]),
         meta,
       ]);
