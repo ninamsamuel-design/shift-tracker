@@ -593,46 +593,54 @@ function makeStandbyFragment(startMs, endMs) {
   };
 }
 
-// If a new call-in overlaps an existing on-call standby entry, trim/split the
-// standby entry around the call-in window so the overnight total stays
-// accurate instead of double-counting the call-in hours as also standby.
-function splitStandbyForCallback(cbRange) {
-  if (!cbRange) return;
+// Any entry type that represents actually-worked clock time, as opposed to
+// standby or flat/hours-only entries. Used below to decide which entries
+// should trim an overlapping on-call standby entry, and by computeWeeks for
+// the recall/continuation gap check.
+const WORKED_TYPES = new Set(["shift", "callback", "callback_1hr", "extra_shift", "training"]);
+
+// If a new worked-time entry (scheduled shift, extra shift/ESIP, training, or
+// callback) overlaps an existing on-call standby entry, trim/split the
+// standby entry around the worked window so the overnight total stays
+// accurate instead of double-counting the worked hours as also standby.
+function splitStandbyForWorked(workedRange) {
+  if (!workedRange) return;
   const toRemove = [];
   const toAdd = [];
   entries.forEach(e => {
     if (e.type !== "oncall") return;
     const osRange = entryRangeMs(e.date, e.startTime, e.endTime);
     if (!osRange) return;
-    const overlapStart = Math.max(osRange.start, cbRange.start);
-    const overlapEnd = Math.min(osRange.end, cbRange.end);
+    const overlapStart = Math.max(osRange.start, workedRange.start);
+    const overlapEnd = Math.min(osRange.end, workedRange.end);
     if (overlapStart >= overlapEnd) return;
     toRemove.push(e.id);
-    if (osRange.start < cbRange.start) toAdd.push(makeStandbyFragment(osRange.start, cbRange.start));
-    if (cbRange.end < osRange.end) toAdd.push(makeStandbyFragment(cbRange.end, osRange.end));
+    if (osRange.start < workedRange.start) toAdd.push(makeStandbyFragment(osRange.start, workedRange.start));
+    if (workedRange.end < osRange.end) toAdd.push(makeStandbyFragment(workedRange.end, osRange.end));
   });
   if (toRemove.length === 0) return;
   entries = entries.filter(e => !toRemove.includes(e.id)).concat(toAdd);
 }
 
-// Mirror of splitStandbyForCallback for the reverse order: if a new on-call
-// standby is added after a call-in that already exists, trim the new
-// standby's range around any overlapping call-ins instead of double-counting.
+// Mirror of splitStandbyForWorked for the reverse order: if a new on-call
+// standby is added after a worked-time entry that already exists, trim the
+// new standby's range around any overlapping worked entries instead of
+// double-counting.
 // Returns an array of {start,end} ms fragments with the overlaps removed.
-function trimStandbyRangeAgainstCallbacks(range) {
+function trimStandbyRangeAgainstWorked(range) {
   if (!range) return [range];
   let fragments = [{ start: range.start, end: range.end }];
   entries.forEach(e => {
-    if (e.type !== "callback") return;
-    const cbRange = entryRangeMs(e.date, e.startTime, e.endTime);
-    if (!cbRange) return;
+    if (!WORKED_TYPES.has(e.type)) return;
+    const wRange = entryRangeMs(e.date, e.startTime, e.endTime);
+    if (!wRange) return;
     const next = [];
     fragments.forEach(f => {
-      const overlapStart = Math.max(f.start, cbRange.start);
-      const overlapEnd = Math.min(f.end, cbRange.end);
+      const overlapStart = Math.max(f.start, wRange.start);
+      const overlapEnd = Math.min(f.end, wRange.end);
       if (overlapStart >= overlapEnd) { next.push(f); return; }
-      if (f.start < cbRange.start) next.push({ start: f.start, end: cbRange.start });
-      if (cbRange.end < f.end) next.push({ start: cbRange.end, end: f.end });
+      if (f.start < wRange.start) next.push({ start: f.start, end: wRange.start });
+      if (wRange.end < f.end) next.push({ start: wRange.end, end: f.end });
     });
     fragments = next;
   });
@@ -953,7 +961,6 @@ function computeWeeks() {
   // uniformly (scheduled shifts, ESIP, training, etc.).
   const recalledMap = new Map();
   const gapBeforeMap = new Map();
-  const WORKED_TYPES = new Set(["shift", "callback", "callback_1hr", "extra_shift", "training"]);
   for (let i = 1; i < sorted.length; i++) {
     const cur = sorted[i];
     if (!cur.startTime || !isValidTimeStr(cur.startTime)) continue;
@@ -1451,9 +1458,9 @@ async function init() {
     const mealSkipped = document.getElementById("entryMealSkipped").checked;
     if (!date) { alert("Pick a date."); return; }
     if (type !== "callback_cancelled" && (!hoursVal || parseFloat(hoursVal) <= 0)) { alert("Enter hours."); return; }
-    if (type === "callback" && startTime && endTime) {
-      const cbRange = entryRangeMs(date, startTime, endTime);
-      splitStandbyForCallback(cbRange);
+    if (WORKED_TYPES.has(type) && startTime && endTime) {
+      const workedRange = entryRangeMs(date, startTime, endTime);
+      splitStandbyForWorked(workedRange);
     }
     const wasEditing = !!editingId;
     if (editingId) {
@@ -1464,7 +1471,7 @@ async function init() {
       cancelEdit();
     } else if (type === "oncall" && startTime && endTime) {
       const stRange = entryRangeMs(date, startTime, endTime);
-      const fragments = trimStandbyRangeAgainstCallbacks(stRange);
+      const fragments = trimStandbyRangeAgainstWorked(stRange);
       if (fragments.length === 0) {
         alert("This on-call window is fully covered by an existing call-in entry — nothing new to add.");
       } else {
