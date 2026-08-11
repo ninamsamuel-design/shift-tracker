@@ -237,6 +237,11 @@
         <label>Call-in minimum (hrs)</label>
         <input type="number" step="0.5" id="callbackMinHours">
       </div>
+      <div class="field">
+        <label>Shift-continuation gap threshold (min)</label>
+        <input type="number" step="5" id="continuationGapMinutes">
+        <p class="type-note" style="margin-top:6px; margin-bottom:0;">A punch-in less than this many minutes after the prior punch-out is treated as a continuation of the same shift (OT/DT applies, no differential). A real gap at or above this makes it a new shift (differential-eligible again). Unconfirmed by payroll — 60 min is a starting guess, adjust if you hear otherwise.</p>
+      </div>
     </div>
   </div>
 
@@ -351,7 +356,7 @@ const supabaseClient = (SUPABASE_URL && SUPABASE_ANON_KEY && window.supabase)
   ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
   : null;
 
-const DEFAULT_SETTINGS = { baseRate: 45, eveningDiff: 3.25, nightDiff: 5.00, weekendDiff: 3.80, onCallRate: 20, callbackMinHours: 2, role: "rn" };
+const DEFAULT_SETTINGS = { baseRate: 45, eveningDiff: 3.25, nightDiff: 5.00, weekendDiff: 3.80, onCallRate: 20, callbackMinHours: 2, continuationGapMinutes: 60, role: "rn" };
 
 // Differential/on-call presets by job title. RN rates confirmed against real
 // paystubs; tech rates from the official salary rate sheet (Ancillary Rates
@@ -652,12 +657,21 @@ function autoCalcHours() {
 
 const CALLBACK_TYPES = new Set(["callback", "callback_1hr"]);
 
-// Window-overlap hours for a shift, used two different ways depending on
-// entry type (see autoDetectDifferential and computeEntryBase):
-// callback-type entries use these to decide majority classification only;
-// regular shift-type entries use these BOTH for the qualifying threshold
-// and as the actual differential-eligible hours (proportional, not the
-// whole shift).
+// Window-overlap hours for a callback, used by autoDetectDifferential to
+// pick evening vs. night when a callback spans both (majority-window
+// classification -- see the comment there). Not used for scheduled/extra
+// shifts: those never get evening/night differential regardless of window
+// overlap (see computeEntryBase).
+//
+// Evening window is defined 1700-2400 with a >=4h threshold; per rule, the
+// qualifying block is specifically 1700-2100 (4h wide), so this is
+// equivalent to "must still be clocked in through 2100" for anyone starting
+// at/before 1700, later for a later start. Night window 0000-0800, same
+// >=4h logic ("must clock out at 0400 or later" for a start at/before
+// midnight). Whether a given callback's differential actually gets PAID
+// also depends on the continuation/gap check in computeEntryBase -- these
+// two checks are independent (this is the time-of-day test, that's the
+// OT/DT override test).
 function diffWindowHours(dateStr, startStr, endStr) {
   let start = roundToQuarterHour(timeToMin(startStr));
   let end = roundToQuarterHour(timeToMin(endStr));
@@ -676,26 +690,19 @@ function autoDetectDifferential(dateStr, startStr, endStr, entryType) {
   const dow1 = end > 1440 ? (dow0 + 1) % 7 : null;
   const isWeekend = (dow0 === 0 || dow0 === 6) || (dow1 !== null && (dow1 === 0 || dow1 === 6));
   if (isWeekend) return "weekend";
+  // Evening/night classification only matters for callback-type entries --
+  // confirmed a scheduled/extra shift never gets evening/night diff
+  // regardless of window overlap (see computeEntryBase), so there's nothing
+  // to classify for other types.
+  if (!CALLBACK_TYPES.has(entryType)) return "none";
   const { eveningHrs, nightHrs } = diffWindowHours(dateStr, startStr, endStr);
-  if (CALLBACK_TYPES.has(entryType)) {
-    // Confirmed against 3 real callback examples: a callback spanning BOTH
-    // the evening and night windows is classified as a WHOLE under
-    // whichever window holds the MAJORITY of its hours -- not split, and
-    // not requiring each window to independently reach 4h. E.g.
-    // 19:26-07:04 (4.57h evening + 7.07h night) posted entirely as Night;
-    // 17:30-00:30 (6.5h evening + 0.5h night) posted entirely as Evening.
-    if (nightHrs + eveningHrs >= 4) return nightHrs >= eveningHrs ? "night" : "evening";
-    return "none";
-  }
-  // Regular scheduled shifts: each window must independently reach 4+
-  // hours, and only that window's actual overlap hours are paid at the
-  // differential rate — not the whole shift. A confirmed real 14.5h shift
-  // (07:00-22:00, 5h evening overlap) got zero differential despite the
-  // overlap alone clearing 4h, so shift-type eligibility itself is still
-  // unconfirmed pending payroll's response — this only fixes how MUCH of
-  // the shift would be eligible if it does apply, not whether it does.
-  if (nightHrs >= 4) return "night";
-  if (eveningHrs >= 4) return "evening";
+  // Confirmed against 3 real callback examples: a callback spanning BOTH
+  // the evening and night windows is classified as a WHOLE under
+  // whichever window holds the MAJORITY of its hours -- not split, and
+  // not requiring each window to independently reach 4h. E.g.
+  // 19:26-07:04 (4.57h evening + 7.07h night) posted entirely as Night;
+  // 17:30-00:30 (6.5h evening + 0.5h night) posted entirely as Evening.
+  if (nightHrs + eveningHrs >= 4) return nightHrs >= eveningHrs ? "night" : "evening";
   return "none";
 }
 
@@ -722,19 +729,19 @@ function diffLabel(entry) {
   return entry.diffMode === "auto" ? label + " (auto)" : label;
 }
 
-function computeEntry(entry, priorRegularHours, recalledWithin1hr) {
+function computeEntry(entry, priorRegularHours, recalledWithin1hr, gapBeforeMinutes) {
   // A skipped meal break is already accounted for in the hours themselves —
   // autoCalcHours() doesn't subtract the standard 30-min meal deduction when
   // mealSkipped is checked, so you're already being paid for that half
   // hour as worked time. There's no separate penalty payment on top of
   // that; an earlier version of this app assumed a flat 1h bonus, but that
   // wasn't confirmed and doesn't show up on real paystubs.
-  return computeEntryBase(entry, priorRegularHours, recalledWithin1hr);
+  return computeEntryBase(entry, priorRegularHours, recalledWithin1hr, gapBeforeMinutes);
 }
 
 const DIFF_ELIGIBLE_TYPES = new Set(["shift", "training", "callback", "callback_1hr", "extra_shift"]);
 
-function computeEntryBase(entry, priorRegularHours, recalledWithin1hr) {
+function computeEntryBase(entry, priorRegularHours, recalledWithin1hr, gapBeforeMinutes) {
   const rate = settings.baseRate;
   const otRate = rate * 1.5;
   const dtRate = rate * 2;
@@ -743,24 +750,36 @@ function computeEntryBase(entry, priorRegularHours, recalledWithin1hr) {
   // own flat line — confirmed against a real paystub (Night Shift
   // Differential: 9.75h @ $5.00/hr = $48.75 flat, not multiplied by whatever
   // OT/premium those same hours also earned elsewhere on the stub) — and
-  // applies to the entry's FULL hours once a type is determined, not a
-  // partial slice (see autoDetectDifferential's majority-window comment for
-  // why: real examples show the whole shift gets one differential type).
+  // applies to the entry's FULL hours once eligible, not a partial slice.
+  //
+  // Evening/night differential is CALLBACK-ONLY. A scheduled shift or extra
+  // shift (ESIP) that simply runs long into the evening/night does NOT get
+  // it, no matter how many hours overlap the window -- confirmed by two real
+  // examples that both got zero differential despite clearing the 4h window
+  // threshold: the 3/26 14.5h regular shift (07:00-22:00, 5h evening
+  // overlap) and the 8/10 10h+ ESIP extra shift (11:49-22:54, 5.5h+ evening
+  // overlap). Only an actual callback qualifies, and only when it's a
+  // genuinely NEW shift: a separate punch-in after a real gap (>=
+  // settings.continuationGapMinutes) from the prior WORKED entry's
+  // clock-out. A callback starting within that gap window (e.g. the
+  // <1h-recall case, or called back again before truly clocking out) is a
+  // continuation, not a new shift, and OT/DT applies instead -- zero
+  // differential even though it's a callback. gapBeforeMinutes is computed
+  // in computeWeeks. Weekend differential has no such restriction: it
+  // applies to any diff-eligible type, no gap check, per real evidence
+  // ("any amount of time worked on a weekend").
   let diffPay = 0;
   let diffLine = null;
   if (DIFF_ELIGIBLE_TYPES.has(entry.type)) {
     const diffType = resolveDifferential(entry);
-    if (diffType !== "none") {
+    const isEveningNight = diffType === "evening" || diffType === "night";
+    const eligibleForType = diffType === "weekend" || CALLBACK_TYPES.has(entry.type);
+    const isContinuation = isEveningNight && gapBeforeMinutes != null && gapBeforeMinutes < settings.continuationGapMinutes;
+    if (diffType !== "none" && eligibleForType && !isContinuation) {
       const diffPerHour = diffType === "evening" ? settings.eveningDiff
         : diffType === "night" ? settings.nightDiff
         : settings.weekendDiff;
-      let diffHours = entry.hours;
-      // Regular shifts (not callbacks): only the actual window-overlap
-      // hours are differential-eligible, not the whole shift.
-      if (!CALLBACK_TYPES.has(entry.type) && diffType !== "weekend" && entry.startTime && entry.endTime) {
-        const { eveningHrs, nightHrs } = diffWindowHours(entry.date, entry.startTime, entry.endTime);
-        diffHours = Math.min(entry.hours, diffType === "evening" ? eveningHrs : nightHrs);
-      }
+      const diffHours = entry.hours;
       diffPay = diffHours * diffPerHour;
       diffLine = { tag: "diff", label: roundQuarter(diffHours) + "h " + diffType + " diff @ $" + diffPerHour.toFixed(2) + "/hr", amt: diffPay };
     }
@@ -771,15 +790,19 @@ function computeEntryBase(entry, priorRegularHours, recalledWithin1hr) {
   };
 
   if (entry.type === "extra_shift") {
-    // Best-guess model, unconfirmed: flat 1.5x total (per charge nurse's
-    // verbal offer), shown split as regular + ESIP/LSN premium since that's
-    // the pattern every other premium code follows on the real stubs.
+    // Confirmed: ESIP-coded punches always pay flat 1.5x total, regardless
+    // of whether those hours would otherwise be OT or straight time -- a
+    // separate mechanism from the OT/DT calc below. Shown split as regular
+    // + ESIP premium since that's the pattern every other premium code
+    // follows on the real stubs. This flat rate does NOT exempt the entry
+    // from the differential continuation/gap check above -- a rolling ESIP
+    // shift with no gap before it still gets zero differential.
     const pay = entry.hours * otRate;
     const regPortion = entry.hours * rate;
     const esipPortion = pay - regPortion;
     return addDiff({ pay, regularHoursAdded: entry.hours, lines: [
       { tag: "reg", label: entry.hours + "h regular (extra shift)", amt: regPortion },
-      { tag: "ot", label: entry.hours + "h ESIP premium (unconfirmed)", amt: esipPortion },
+      { tag: "ot", label: entry.hours + "h ESIP premium", amt: esipPortion },
     ] });
   }
 
@@ -922,21 +945,30 @@ function computeWeeks() {
   // relying on the right type being hand-picked, check whether this
   // callback's start time is <1h after the immediately preceding entry's
   // end time (chronologically, across day/week boundaries).
+  //
+  // Also builds gapBeforeMap, the general "minutes since the prior WORKED
+  // entry's clock-out" value used to decide continuation vs. new-shift for
+  // differential eligibility (see computeEntryBase) -- computed for every
+  // entry type, not just callbacks, since the continuation rule applies
+  // uniformly (scheduled shifts, ESIP, training, etc.).
   const recalledMap = new Map();
+  const gapBeforeMap = new Map();
   const WORKED_TYPES = new Set(["shift", "callback", "callback_1hr", "extra_shift", "training"]);
   for (let i = 1; i < sorted.length; i++) {
     const cur = sorted[i];
-    if (cur.type !== "callback" || !cur.startTime || !isValidTimeStr(cur.startTime)) continue;
+    if (!cur.startTime || !isValidTimeStr(cur.startTime)) continue;
     const prev = sorted[i - 1];
-    // Standby (on-call) transitioning directly into a callback is the
-    // normal, expected workflow, not a disruptive recall — only count a gap
-    // from a prior entry that was itself actively worked time.
+    // Standby (on-call) transitioning directly into worked time is the
+    // normal, expected workflow, not a disruptive recall or a continuation
+    // of a prior shift — only count a gap from a prior entry that was
+    // itself actively worked time.
     if (!WORKED_TYPES.has(prev.type)) continue;
     const prevEnd = entryEndDateTime(prev);
     const curStart = entryDateTime(cur.date, cur.startTime);
     if (!prevEnd || !curStart) continue;
     const gapMin = (curStart - prevEnd) / 60000;
-    if (gapMin > 0 && gapMin < 60) recalledMap.set(cur.id, true);
+    gapBeforeMap.set(cur.id, Math.max(0, gapMin));
+    if (cur.type === "callback" && gapMin > 0 && gapMin < 60) recalledMap.set(cur.id, true);
   }
 
   sorted.forEach(e => {
@@ -948,7 +980,8 @@ function computeWeeks() {
     let running = 0;
     const weekEntries = sorted.filter(e => getWeekStart(e.date) === wk);
     weekEntries.forEach(e => {
-      const result = computeEntry(e, running, recalledMap.get(e.id) || false);
+      const gapBefore = gapBeforeMap.has(e.id) ? gapBeforeMap.get(e.id) : null;
+      const result = computeEntry(e, running, recalledMap.get(e.id) || false, gapBefore);
       running += result.regularHoursAdded;
       byWeek[wk].entries.push({ ...e, result });
       byWeek[wk].total += result.pay;
@@ -1275,6 +1308,7 @@ function loadSettingsUI() {
   document.getElementById("nightDiff").value = settings.nightDiff;
   document.getElementById("weekendDiff").value = settings.weekendDiff;
   document.getElementById("callbackMinHours").value = settings.callbackMinHours;
+  document.getElementById("continuationGapMinutes").value = settings.continuationGapMinutes;
 }
 
 function persistSettings() {
@@ -1298,7 +1332,7 @@ function renderExpectedSummary() {
     ["Daily double time (2x)", s.dailyDT], ["Recall double time (2x)", s.recallDT],
     ["On-call standby", s.onCallStandby], ["Call-in, straight (≤2h)", s.callInStraight],
     ["Call-in, premium (1.5x)", s.callInPremium], ["Training", s.training], ["Holiday", s.holiday],
-    ["Extra shift (ESIP, unconfirmed)", s.extraShift],
+    ["Extra shift (ESIP)", s.extraShift],
     ["Comp time used", s.compUsed], ["Evening diff", s.eveningDiff], ["Night diff", s.nightDiff], ["Weekend diff", s.weekendDiff],
   ].filter(r => r[1] > 0.001);
   let html = '<div style="margin-top:10px; padding:12px; background:#FAFBFA; border-radius:8px;">';
@@ -1373,7 +1407,7 @@ async function init() {
     render();
   });
 
-  ["baseRate", "onCallRate", "eveningDiff", "nightDiff", "weekendDiff", "callbackMinHours"].forEach(id => {
+  ["baseRate", "onCallRate", "eveningDiff", "nightDiff", "weekendDiff", "callbackMinHours", "continuationGapMinutes"].forEach(id => {
     document.getElementById(id).addEventListener("change", (ev) => {
       settings[id] = parseFloat(ev.target.value) || 0;
       persistSettings();
