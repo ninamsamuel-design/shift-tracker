@@ -599,12 +599,41 @@ function makeStandbyFragment(startMs, endMs) {
 // the recall/continuation gap check.
 const WORKED_TYPES = new Set(["shift", "callback", "callback_1hr", "extra_shift", "training"]);
 
+// An overnight callback that starts after midnight is naturally logged under
+// the date the on-call stretch STARTED (e.g. "8/13" for a call-in at 3:30am
+// during the night of 8/13-8/14), not the calendar date the clock technically
+// reads. Since neither time in a pair like 03:30-06:30 wraps past midnight on
+// its own, entryRangeMs has no way to tell that's meant -- it just computes
+// the range on the literal date given, which can land exactly 24h off from
+// the standby it's supposed to overlap, so the split silently finds "no
+// overlap" and leaves the standby untouched. Confirmed bug: a callback dated
+// one day earlier than its clock time technically falls on failed to trim a
+// pre-existing 11.5h standby at all. To make the split robust to this
+// off-by-one-day labeling, try the range as given and shifted ±24h, and use
+// whichever version actually overlaps something -- overlap is checked against
+// realDates worth of candidates, no guessing beyond a single calendar day.
+function resolveOverlapRange(range, candidateEntries) {
+  if (!range) return range;
+  const candidates = [range, { start: range.start - 86400000, end: range.end - 86400000 }, { start: range.start + 86400000, end: range.end + 86400000 }];
+  for (const cand of candidates) {
+    const overlaps = candidateEntries.some(e => {
+      const eRange = entryRangeMs(e.date, e.startTime, e.endTime);
+      if (!eRange) return false;
+      return Math.max(eRange.start, cand.start) < Math.min(eRange.end, cand.end);
+    });
+    if (overlaps) return cand;
+  }
+  return range;
+}
+
 // If a new worked-time entry (scheduled shift, extra shift/ESIP, training, or
 // callback) overlaps an existing on-call standby entry, trim/split the
 // standby entry around the worked window so the overnight total stays
 // accurate instead of double-counting the worked hours as also standby.
 function splitStandbyForWorked(workedRange) {
   if (!workedRange) return;
+  const standbyEntries = entries.filter(e => e.type === "oncall");
+  workedRange = resolveOverlapRange(workedRange, standbyEntries);
   const toRemove = [];
   const toAdd = [];
   entries.forEach(e => {
@@ -629,6 +658,8 @@ function splitStandbyForWorked(workedRange) {
 // Returns an array of {start,end} ms fragments with the overlaps removed.
 function trimStandbyRangeAgainstWorked(range) {
   if (!range) return [range];
+  const workedEntries = entries.filter(e => WORKED_TYPES.has(e.type));
+  range = resolveOverlapRange(range, workedEntries);
   let fragments = [{ start: range.start, end: range.end }];
   entries.forEach(e => {
     if (!WORKED_TYPES.has(e.type)) return;
