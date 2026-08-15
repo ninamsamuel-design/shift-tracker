@@ -1136,6 +1136,19 @@ function render() {
         displayItems.push({ isGroup: false, entry: e });
       }
     });
+    // Standby blocks conventionally start in the evening and run into the
+    // following morning, split around a call-in in between. All fragments
+    // share the same "date" (whichever day the block started), so a plain
+    // startTime sort puts an early-morning tail fragment (e.g. 05:45) before
+    // the evening fragment it actually follows (e.g. 22:30). Push
+    // before-noon starts later so the list reads in the order the night
+    // actually happened.
+    Object.values(oncallGroupByDate).forEach(group => {
+      group.members.sort((a, b) => {
+        const key = m => { const mins = timeToMin(m.startTime); return mins < 720 ? mins + 1440 : mins; };
+        return key(a) - key(b);
+      });
+    });
 
     displayItems.forEach(item => {
       if (item.isGroup && item.members.length === 1) item = { isGroup: false, entry: item.members[0] };
