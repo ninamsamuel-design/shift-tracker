@@ -378,7 +378,7 @@ const TYPE_INFO = {
   callback: { label: "Called-in", note: "Under the 2-hour minimum: paid straight time for the full 2 hours. At or above 2 hours worked: full worked hours at 1.5x." },
   callback_1hr: { label: "Call-back within 1 hr of clock-out", note: "Goes straight to double time (2x) for all hours." },
   callback_cancelled: { label: "Call-back, case cancelled", note: "First 15 min at 1.5x, remaining time up to the 2-hour minimum at straight time — flat payout regardless of hours entered." },
-  oncall: { label: "On-call standby", note: "Paid at the flat on-call rate; doesn't count toward OT. Log from your actual clock-out time. If you're called in with no break, log that portion as a shift/recall entry instead." },
+  oncall: { label: "On-call standby", note: "Paid at the flat on-call rate; doesn't count toward OT. Log the whole standby block as one entry, start to end (needs both times) — if a call-in happens partway through, log that separately as its own shift/callback entry and the app will automatically carve the standby around it. If you're called in with no break, log that portion as a shift/recall entry instead." },
 };
 
 const storageAdapter = {
