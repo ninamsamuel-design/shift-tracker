@@ -677,6 +677,46 @@ function trimStandbyRangeAgainstWorked(range) {
   return fragments;
 }
 
+// Reverse of splitStandbyForWorked: when a worked-time entry that previously
+// trimmed a standby entry is deleted, or edited to a different time/date/
+// type, the standby fragments it carved out of don't heal back on their
+// own -- the split is a one-time mutation, not something recomputed live.
+// Called with the worked entry's OLD range (before it's removed/changed):
+// find on-call fragments whose edge exactly touches that range (the pieces
+// splitStandbyForWorked would have created) and merge them back into one
+// standby entry covering the full original window.
+function restoreStandbyForWorked(oldWorkedEntry) {
+  if (!oldWorkedEntry || !WORKED_TYPES.has(oldWorkedEntry.type)) return;
+  const oldRange = entryRangeMs(oldWorkedEntry.date, oldWorkedEntry.startTime, oldWorkedEntry.endTime);
+  if (!oldRange) return;
+  const adjacent = entries.filter(e => {
+    if (e.type !== "oncall" || e.id === oldWorkedEntry.id) return false;
+    const r = entryRangeMs(e.date, e.startTime, e.endTime);
+    if (!r) return false;
+    return r.end === oldRange.start || r.start === oldRange.end;
+  });
+  if (adjacent.length === 0) return;
+  const starts = adjacent.map(e => entryRangeMs(e.date, e.startTime, e.endTime).start).concat([oldRange.start]);
+  const ends = adjacent.map(e => entryRangeMs(e.date, e.startTime, e.endTime).end).concat([oldRange.end]);
+  const mergedStart = Math.min(...starts);
+  const mergedEnd = Math.max(...ends);
+  const adjacentIds = new Set(adjacent.map(e => e.id));
+  entries = entries.filter(e => !adjacentIds.has(e.id)).concat([makeStandbyFragment(mergedStart, mergedEnd)]);
+}
+
+// splitStandbyForWorked silently does nothing to an on-call entry that has
+// no start/end time set (entryRangeMs can't compute a range without both),
+// so a standby logged as a flat hours number with no times never gets
+// trimmed when a call-in lands inside it -- and never says why. This warns
+// instead of failing silently, for any same-date on-call entry that
+// couldn't be checked for overlap.
+function warnIfUncheckableStandby(date) {
+  const untimed = entries.filter(e => e.type === "oncall" && e.date === date && (!e.startTime || !e.endTime));
+  if (untimed.length > 0) {
+    alert("Heads up: there's an on-call standby entry on " + date + " with no start/end time set, so it couldn't be checked against this call-in for overlap. Edit that on-call entry to add its times, then re-check the total.");
+  }
+}
+
 function autoCalcHours() {
   const type = document.getElementById("entryType").value;
   if (type === "callback_cancelled") return;
@@ -1190,6 +1230,7 @@ function render() {
         const delBtn = el("button", { class: "del", text: "✕", title: "Remove" });
         delBtn.addEventListener("click", () => {
           if (!confirm("Are you sure you want to delete this entry?")) return;
+          restoreStandbyForWorked(e);
           entries = entries.filter(x => x.id !== e.id);
           if (editingId === e.id) cancelEdit();
           persistEntries();
@@ -1501,9 +1542,13 @@ async function init() {
     const mealSkipped = document.getElementById("entryMealSkipped").checked;
     if (!date) { alert("Pick a date."); return; }
     if (type !== "callback_cancelled" && (!hoursVal || parseFloat(hoursVal) <= 0)) { alert("Enter hours."); return; }
+    if (type === "oncall" && (!startTime || !endTime)) { alert("Enter a start and end time for on-call/standby entries, so call-ins that land inside this window can be subtracted automatically."); return; }
+    const oldEntryForEdit = editingId ? entries.find(x => x.id === editingId) : null;
     if (WORKED_TYPES.has(type) && startTime && endTime) {
+      if (oldEntryForEdit) restoreStandbyForWorked(oldEntryForEdit);
       const workedRange = entryRangeMs(date, startTime, endTime);
       splitStandbyForWorked(workedRange);
+      warnIfUncheckableStandby(date);
     }
     const wasEditing = !!editingId;
     if (editingId) {
