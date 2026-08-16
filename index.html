@@ -4,6 +4,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Shift Pay Tracker</title>
+<script>
+  (function () {
+    try {
+      var saved = localStorage.getItem("shift_tracker_theme");
+      if (saved === "dark" || saved === "light") document.documentElement.setAttribute("data-theme", saved);
+    } catch (e) {}
+  })();
+</script>
 <style>
   :root {
     --ink: #0E2420;
@@ -15,9 +23,62 @@
     --pulse-soft: #E4F5EF;
     --amber: #C97A2B;
     --amber-soft: #FBF0E2;
+    --amber-ink: #7a4d1a;
+    --on-amber: #FFFFFF;
     --danger: #B5473A;
+    --danger-soft: #FBE7E4;
+    --input-bg: #FCFDFC;
+    --neutral-soft: #EFEFEF;
+    --box-bg: #FAFBFA;
+    --btn-bg: #0E2420;
+    --btn-fg: #FFFFFF;
+    --btn-hover: #1a3a34;
     --mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
     --sans: 'IBM Plex Sans', -apple-system, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ink: #EAF3F0;
+      --ink-soft: #A9C0BA;
+      --paper: #0B1613;
+      --card: #10201C;
+      --line: #1F332E;
+      --pulse: #2BC79A;
+      --pulse-soft: #113028;
+      --amber: #E0A25C;
+      --amber-soft: #2E2313;
+      --amber-ink: #E8B57E;
+      --on-amber: #2E2313;
+      --danger: #E08578;
+      --danger-soft: #341C19;
+      --input-bg: #0D1A16;
+      --neutral-soft: #182721;
+      --box-bg: #0D1A16;
+      --btn-bg: #2BC79A;
+      --btn-fg: #0B1613;
+      --btn-hover: #24B38C;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ink: #EAF3F0;
+    --ink-soft: #A9C0BA;
+    --paper: #0B1613;
+    --card: #10201C;
+    --line: #1F332E;
+    --pulse: #2BC79A;
+    --pulse-soft: #113028;
+    --amber: #E0A25C;
+    --amber-soft: #2E2313;
+    --amber-ink: #E8B57E;
+    --on-amber: #2E2313;
+    --danger: #E08578;
+    --danger-soft: #341C19;
+    --input-bg: #0D1A16;
+    --neutral-soft: #182721;
+    --box-bg: #0D1A16;
+    --btn-bg: #2BC79A;
+    --btn-fg: #0B1613;
+    --btn-hover: #24B38C;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; background: var(--paper); }
@@ -72,11 +133,11 @@
     padding: 9px 10px;
     border: 1px solid var(--line);
     border-radius: 7px;
-    background: #FCFDFC;
+    background: var(--input-bg);
     color: var(--ink);
   }
   input:focus, select:focus { outline: 2px solid var(--pulse); outline-offset: 1px; border-color: var(--pulse); }
-  .time-invalid { border-color: var(--danger) !important; background: #FBE7E4; }
+  .time-invalid { border-color: var(--danger) !important; background: var(--danger-soft); }
   .field { margin-bottom: 12px; }
   .row-actions { display: flex; gap: 10px; margin-top: 4px; }
   button {
@@ -88,9 +149,9 @@
     border: 1px solid transparent;
     cursor: pointer;
   }
-  .btn-primary { background: var(--ink); color: #fff; transition: background 0.15s; }
-  .btn-primary.btn-confirmed { background: var(--pulse); }
-  .btn-primary:hover { background: #1a3a34; }
+  .btn-primary { background: var(--btn-bg); color: var(--btn-fg); transition: background 0.15s; }
+  .btn-primary.btn-confirmed { background: var(--pulse); color: var(--btn-fg); }
+  .btn-primary:hover { background: var(--btn-hover); }
   .settings-toggle { font-family: var(--mono); font-size: 11.5px; color: var(--ink-soft); background: none; border: none; cursor: pointer; text-decoration: underline; padding: 0; }
 
   .type-note { font-size: 12px; color: var(--ink-soft); margin-top: -6px; margin-bottom: 12px; line-height: 1.5; }
@@ -126,9 +187,9 @@
   }
   .tag-reg { background: var(--pulse-soft); color: var(--pulse); }
   .tag-ot { background: var(--amber-soft); color: var(--amber); }
-  .tag-dt { background: #FBE7E4; color: var(--danger); }
-  .tag-oncall { background: #EFEFEF; color: var(--ink-soft); }
-  .tag-diff { background: #EFEFEF; color: var(--ink-soft); }
+  .tag-dt { background: var(--danger-soft); color: var(--danger); }
+  .tag-oncall { background: var(--neutral-soft); color: var(--ink-soft); }
+  .tag-diff { background: var(--neutral-soft); color: var(--ink-soft); }
 
   .del { background: none; border: none; color: var(--ink-soft); font-size: 18px; cursor: pointer; padding: 6px 10px; line-height: 1; }
   .edit { background: none; border: none; color: var(--ink-soft); font-size: 20px; cursor: pointer; padding: 6px 10px; line-height: 1; }
@@ -145,23 +206,26 @@
 </head>
 <body>
 <div id="app">
-  <div style="background:#FBF0E2; border:1px solid #C97A2B; border-radius:8px; padding:10px 14px; margin-bottom:18px; display:flex; align-items:center; gap:10px;">
-    <span style="font-family:var(--mono); font-size:10.5px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; background:#C97A2B; color:#fff; padding:3px 8px; border-radius:4px; white-space:nowrap;">Test version</span>
-    <span style="font-size:12.5px; color:#7a4d1a;">This is a beta rollout for feedback — not an official payroll tool. Spot something off? Let me know.</span>
+  <div style="background:var(--amber-soft); border:1px solid var(--amber); border-radius:8px; padding:10px 14px; margin-bottom:18px; display:flex; align-items:center; gap:10px;">
+    <span style="font-family:var(--mono); font-size:10.5px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; background:var(--amber); color:var(--on-amber); padding:3px 8px; border-radius:4px; white-space:nowrap;">Test version</span>
+    <span style="font-size:12.5px; color:var(--amber-ink);">This is a beta rollout for feedback — not an official payroll tool. Spot something off? Let me know.</span>
   </div>
 
   <div class="masthead">
     <div class="masthead-top">
       <div class="kicker">Personal pay verification</div>
-      <div class="auth-bar" id="authBar" style="display:none;">
-        <button class="settings-toggle" id="signInToggle">sign in</button>
+      <div style="display:flex; align-items:center; gap:14px;">
+        <button class="settings-toggle" id="themeToggle">dark mode</button>
+        <div class="auth-bar" id="authBar" style="display:none;">
+          <button class="settings-toggle" id="signInToggle">sign in</button>
+        </div>
       </div>
     </div>
     <h1>Shift Pay Tracker</h1>
     <p>Log your actual hours by category — compare the total against what shows up on your paycheck.</p>
     <svg class="trace" viewBox="0 0 400 22" preserveAspectRatio="none">
       <polyline points="0,11 120,11 135,11 145,2 155,20 165,4 175,11 400,11"
-        fill="none" stroke="#0FA37F" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" opacity="0.55" />
+        fill="none" stroke="var(--pulse)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" opacity="0.55" />
     </svg>
   </div>
 
@@ -339,7 +403,7 @@
       </div>
     </div>
     <div id="expectedSummary"></div>
-    <p class="type-note" style="margin-top:14px; color:#C97A2B;">A more in-depth automatic photo/PDF paystub checker can be accessed within Claude — ask whoever shared this file with you for more information.</p>
+    <p class="type-note" style="margin-top:14px; color:var(--amber);">A more in-depth automatic photo/PDF paystub checker can be accessed within Claude — ask whoever shared this file with you for more information.</p>
   </div>
 
   <div class="card">
@@ -492,6 +556,23 @@ let entries = [];
 let editingId = null;
 let savedWeeks = [];
 let expandedEntryIds = new Set();
+
+function isDarkTheme() {
+  const explicit = document.documentElement.getAttribute("data-theme");
+  if (explicit === "dark") return true;
+  if (explicit === "light") return false;
+  return window.matchMedia("(prefers-color-scheme: dark)").matches;
+}
+function updateThemeToggleLabel() {
+  const btn = document.getElementById("themeToggle");
+  if (btn) btn.textContent = isDarkTheme() ? "light mode" : "dark mode";
+}
+function setTheme(theme) {
+  if (theme) document.documentElement.setAttribute("data-theme", theme);
+  else document.documentElement.removeAttribute("data-theme");
+  try { theme ? localStorage.setItem("shift_tracker_theme", theme) : localStorage.removeItem("shift_tracker_theme"); } catch (e) {}
+  updateThemeToggleLabel();
+}
 
 function uid() { return Math.random().toString(36).slice(2, 10); }
 function money(n) { return n.toLocaleString(undefined, { style: "currency", currency: "USD" }); }
@@ -1434,7 +1515,7 @@ function renderExpectedSummary() {
     ["Extra shift (ESIP)", s.extraShift],
     ["Comp time used", s.compUsed], ["Evening diff", s.eveningDiff], ["Night diff", s.nightDiff], ["Weekend diff", s.weekendDiff],
   ].filter(r => r[1] > 0.001);
-  let html = '<div style="margin-top:10px; padding:12px; background:#FAFBFA; border-radius:8px;">';
+  let html = '<div style="margin-top:10px; padding:12px; background:var(--box-bg); border-radius:8px;">';
   html += '<div style="font-family:var(--mono); font-size:11px; text-transform:uppercase; letter-spacing:.08em; color:var(--ink-soft); margin-bottom:8px;">Expected from tracker</div>';
   rows.forEach(r => { html += `<div class="breakdown-line"><span>${r[0]}</span><b>${r[1].toFixed(2)}h</b></div>`; });
   html += `<div class="breakdown-line" style="border-top:1px solid var(--line); margin-top:6px; padding-top:8px;"><span>Total pay</span><b>${money(s.pay)}</b></div>`;
@@ -1443,6 +1524,15 @@ function renderExpectedSummary() {
 }
 
 async function init() {
+  updateThemeToggleLabel();
+  document.getElementById("themeToggle").addEventListener("click", () => {
+    setTheme(isDarkTheme() ? "light" : "dark");
+  });
+  if (window.matchMedia) {
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+      if (!document.documentElement.getAttribute("data-theme")) updateThemeToggleLabel();
+    });
+  }
   if (supabaseClient) {
     const { data } = await supabaseClient.auth.getSession();
     storageAdapter.session = data.session;
