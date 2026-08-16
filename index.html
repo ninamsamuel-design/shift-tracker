@@ -201,6 +201,7 @@
       <h2 style="margin:0;">Pay rules</h2>
       <button class="settings-toggle" id="settingsToggle">edit rates</button>
     </div>
+    <p class="type-note" style="margin:6px 0 0;">These defaults are calibrated to UCSDH cath lab contracts (RN/CVT/RadTech) — if you're under a different contract or facility, click "edit rates" and double-check every number against your own paystub before trusting the totals.</p>
     <div class="grid2" id="settingsPanel" style="display:none; margin-top:14px;">
       <div class="field" style="grid-column: 1 / -1;">
         <label for="roleSelect">Job title</label>
@@ -379,7 +380,7 @@ const TYPE_INFO = {
   callback: { label: "Called-in", note: "Under the 2-hour minimum: paid straight time for the full 2 hours. At or above 2 hours worked: full worked hours at 1.5x." },
   callback_1hr: { label: "Call-back within 1 hr of clock-out", note: "Goes straight to double time (2x) for all hours." },
   callback_cancelled: { label: "Call-back, case cancelled", note: "First 15 min at 1.5x, remaining time up to the 2-hour minimum at straight time — flat payout regardless of hours entered." },
-  oncall: { label: "On-call standby", note: "Paid at the flat on-call rate; doesn't count toward OT. Log the whole standby block as one entry, start to end (needs both times) — if a call-in happens partway through, log that separately as its own shift/callback entry and the app will automatically carve the standby around it. If you're called in with no break, log that portion as a shift/recall entry instead." },
+  oncall: { label: "On-call standby", note: "Paid at the flat on-call rate; doesn't count toward OT. Log the whole standby block as one entry, start to end (needs both times) — if a call-in happens partway through, log that separately as its own shift/callback entry and the app will automatically carve the standby around it. Example: on call 19:00–07:00, called in 22:00–23:30 → log the on-call as 19:00–07:00 and the callback as 22:00–23:30; the app splits the standby into two pieces (19:00–22:00 and 23:30–07:00) for you. If you're called in with no break, log that portion as a shift/recall entry instead." },
 };
 
 const storageAdapter = {
