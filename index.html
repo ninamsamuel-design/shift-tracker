@@ -406,6 +406,11 @@
   <div class="card">
     <h2>Verify against paystub — expected totals</h2>
     <p class="type-note" style="margin-top:0;">Pick a pay period to see what the tracker expects for each pay category, so you can compare it against your actual paystub by eye.</p>
+    <div class="row-actions" style="margin-bottom:12px;">
+      <button class="btn-ghost" id="verifyPrevPeriod">◂ Prev period</button>
+      <button class="btn-ghost" id="verifyThisPeriod">This period</button>
+      <button class="btn-ghost" id="verifyNextPeriod">Next period ▸</button>
+    </div>
     <div class="grid2">
       <div class="field">
         <label for="verifyStart">Pay period start</label>
@@ -1678,6 +1683,27 @@ function persistSavedWeeks() {
   storageAdapter.set("savedWeeks", JSON.stringify(savedWeeks));
 }
 
+// The 14-day pay-period cycle (payPeriodStart) is the same University-wide
+// payroll calendar regardless of role -- it's just when paychecks are
+// issued, independent of whichever OT rule (weekly for RN, 80h/period for
+// tech) applies inside it. So this auto-fill works identically for both.
+function setVerifyPeriod(startStr) {
+  const start = new Date(startStr + "T00:00:00");
+  const end = new Date(start); end.setDate(end.getDate() + 13);
+  document.getElementById("verifyStart").value = startStr;
+  document.getElementById("verifyEnd").value = localDateStr(end);
+  updateDateDow("verifyStart", "verifyStartDow");
+  updateDateDow("verifyEnd", "verifyEndDow");
+  renderExpectedSummary();
+}
+function shiftVerifyPeriod(days) {
+  const current = document.getElementById("verifyStart").value;
+  if (!current) { setVerifyPeriod(payPeriodStart(localDateStr(new Date()))); return; }
+  const d = new Date(current + "T00:00:00");
+  d.setDate(d.getDate() + days);
+  setVerifyPeriod(localDateStr(d));
+}
+
 function renderExpectedSummary() {
   const start = document.getElementById("verifyStart").value;
   const end = document.getElementById("verifyEnd").value;
@@ -1859,6 +1885,11 @@ async function init() {
   document.getElementById("verifyEnd").addEventListener("input", () => updateDateDow("verifyEnd", "verifyEndDow"));
   document.getElementById("verifyStart").addEventListener("change", renderExpectedSummary);
   document.getElementById("verifyEnd").addEventListener("change", renderExpectedSummary);
+
+  document.getElementById("verifyThisPeriod").addEventListener("click", () => setVerifyPeriod(payPeriodStart(localDateStr(new Date()))));
+  document.getElementById("verifyPrevPeriod").addEventListener("click", () => shiftVerifyPeriod(-14));
+  document.getElementById("verifyNextPeriod").addEventListener("click", () => shiftVerifyPeriod(14));
+  setVerifyPeriod(payPeriodStart(localDateStr(new Date())));
 
   document.getElementById("exportBtn").addEventListener("click", () => {
     const blob = new Blob([JSON.stringify({ settings, entries, savedWeeks }, null, 2)], { type: "application/json" });
