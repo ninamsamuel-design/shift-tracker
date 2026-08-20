@@ -288,23 +288,37 @@
         <label for="onCallRate">On-call standby rate ($/hr)</label>
         <input type="number" step="0.01" id="onCallRate">
       </div>
-      <div class="field">
+      <div class="field" id="scheduleHoursField" style="display:none; grid-column: 1 / -1;">
+        <label for="scheduleHours">Regularly scheduled shift length</label>
+        <select id="scheduleHours">
+          <option value="8">8 hours</option>
+          <option value="10">10 hours</option>
+          <option value="12">12 hours</option>
+        </select>
+        <p class="type-note" style="margin-top:6px; margin-bottom:0;">Per the EX/Patient Care Technical contract: hours beyond this length (up to 12/day) pay 1.5x, and this also sets the consecutive-days-worked threshold (6 days at 8h, 5 at 10h, 4 at 12h) before extra days worked also go to 1.5x.</p>
+      </div>
+      <div class="field" id="eveningDiffField">
         <label for="eveningDiff">Evening differential ($/hr)</label>
         <input type="number" step="0.01" id="eveningDiff">
       </div>
-      <div class="field">
+      <div class="field" id="nightDiffField">
         <label for="nightDiff">Night differential ($/hr)</label>
         <input type="number" step="0.01" id="nightDiff">
       </div>
-      <div class="field">
+      <div class="field" id="weekendDiffField">
         <label for="weekendDiff">Weekend differential ($/hr)</label>
         <input type="number" step="0.01" id="weekendDiff">
+      </div>
+      <div class="field" id="shiftDiffField" style="display:none;">
+        <label for="shiftDiff">Shift differential, 5pm–8am ($/hr)</label>
+        <input type="number" step="0.01" id="shiftDiff">
+        <p class="type-note" style="margin-top:6px; margin-bottom:0;">One flat rate for the whole 5pm–8am window (no separate evening/night split) — applies when 4+ hours of the shift fall in that window. Not independently confirmed against the wage table; double-check it. Weekend differential isn't modeled for this role yet.</p>
       </div>
       <div class="field">
         <label for="callbackMinHours">Call-in minimum (hrs)</label>
         <input type="number" step="0.5" id="callbackMinHours">
       </div>
-      <div class="field">
+      <div class="field" id="continuationGapField">
         <label for="continuationGapMinutes">Shift-continuation gap threshold (min)</label>
         <input type="number" step="5" id="continuationGapMinutes">
         <p class="type-note" style="margin-top:6px; margin-bottom:0;">A punch-in less than this many minutes after the prior punch-out is treated as a continuation of the same shift (OT/DT applies, no differential). A real gap at or above this makes it a new shift (differential-eligible again).</p>
@@ -423,19 +437,45 @@ const supabaseClient = (SUPABASE_URL && SUPABASE_ANON_KEY && window.supabase)
   ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
   : null;
 
-const DEFAULT_SETTINGS = { baseRate: 0, eveningDiff: 3.25, nightDiff: 5.00, weekendDiff: 3.80, onCallRate: 20, callbackMinHours: 2, continuationGapMinutes: 60, role: "rn" };
+const DEFAULT_SETTINGS = { baseRate: 0, eveningDiff: 3.25, nightDiff: 5.00, weekendDiff: 3.80, shiftDiff: 3.00, onCallRate: 20, callbackMinHours: 2, continuationGapMinutes: 60, role: "rn", scheduleHours: 12 };
 
 // Differential/on-call presets by job title. RN rates confirmed against real
 // paystubs; tech rates from the official salary rate sheet (Ancillary Rates
 // table) — evening/night/on-call amounts confirmed there, but double-check
 // your own stub since these can vary by title code or change over time.
+// shiftDiff (techs only) is a single flat rate for the whole 5pm-8am window
+// per Article 37 of the EX/Patient Care Technical contract -- unlike RN,
+// techs don't have separate evening vs. night amounts. Defaulted here to the
+// existing nightDiff figure as a starting point; NOT independently confirmed
+// against Appendix A's actual "shift differential" line -- verify before
+// trusting it.
 const ROLE_PRESETS = {
   rn: { label: "RN", eveningDiff: 3.25, nightDiff: 5.00, weekendDiff: 3.80, onCallRate: 20.00 },
-  cvt: { label: "Cardiovascular Tech (CVT)", eveningDiff: 2.00, nightDiff: 3.00, weekendDiff: 0.00, onCallRate: 12.00 },
-  radtech: { label: "Interventional Radiologic Technologist", eveningDiff: 2.00, nightDiff: 3.00, weekendDiff: 1.00, onCallRate: 9.25 },
-  radtech_sr: { label: "Interventional Radiologic Technologist, Sr", eveningDiff: 2.00, nightDiff: 3.00, weekendDiff: 1.00, onCallRate: 9.25 },
+  cvt: { label: "Cardiovascular Tech (CVT)", eveningDiff: 2.00, nightDiff: 3.00, weekendDiff: 0.00, onCallRate: 12.00, shiftDiff: 3.00 },
+  radtech: { label: "Interventional Radiologic Technologist", eveningDiff: 2.00, nightDiff: 3.00, weekendDiff: 1.00, onCallRate: 9.25, shiftDiff: 3.00 },
+  radtech_sr: { label: "Interventional Radiologic Technologist, Sr", eveningDiff: 2.00, nightDiff: 3.00, weekendDiff: 1.00, onCallRate: 9.25, shiftDiff: 3.00 },
   custom: { label: "Other / custom", eveningDiff: null, nightDiff: null, weekendDiff: null, onCallRate: null },
 };
+
+// EX/Patient Care Technical bargaining unit (CVT, RadTech, RadTech Sr per
+// Amy's confirmation) -- overtime after 80h/14-day pay period rather than
+// 40h/week, a scheduled-shift-length-relative daily premium, a
+// consecutive-days-worked premium, and a single-window shift differential
+// with no weekend differential (per contract review, Article 12/37, and
+// explicit instruction to skip weekend diff for techs for now). RN and
+// "custom" roles are entirely unaffected by any of this.
+function isTechRole(role) { return role === "cvt" || role === "radtech" || role === "radtech_sr"; }
+
+// Any confirmed real UC biweekly pay-period start (always a Sunday) works as
+// the anchor -- periods recur every exactly 14 days, so this reproduces every
+// other period's boundaries forward and back. 2026-08-02 was independently
+// verified against Nina's own reconciled paystub history this session.
+const PAY_PERIOD_ANCHOR_MS = new Date("2026-08-02T00:00:00").getTime();
+function payPeriodStart(dateStr) {
+  const ms = new Date(dateStr + "T00:00:00").getTime();
+  const periodIndex = Math.floor((ms - PAY_PERIOD_ANCHOR_MS) / (14 * 86400000));
+  return localDateStr(new Date(PAY_PERIOD_ANCHOR_MS + periodIndex * 14 * 86400000));
+}
 
 const TYPE_INFO = {
   shift: { label: "Scheduled shift", note: "Regular worked shift. Hours past 12 in this entry go to double time (2x); cumulative regular hours past 40 for the week go to 1.5x." },
@@ -603,9 +643,9 @@ function getWeekStart(dateStr) {
   d.setDate(d.getDate() - day);
   return localDateStr(d);
 }
-function fmtWeek(startStr) {
+function fmtWeek(startStr, spanDays) {
   const start = new Date(startStr + "T00:00:00");
-  const end = new Date(start); end.setDate(end.getDate() + 6);
+  const end = new Date(start); end.setDate(end.getDate() + (spanDays ? spanDays - 1 : 6));
   const opts = { month: "short", day: "numeric" };
   return start.toLocaleDateString(undefined, opts) + " – " + end.toLocaleDateString(undefined, opts);
 }
@@ -875,9 +915,26 @@ function autoDetectDifferential(dateStr, startStr, endStr, entryType) {
   return "none";
 }
 
+// EX/tech contract, Article 37: one flat differential for the whole
+// 5:00pm-8:00am window (no evening/night split like RN), no weekend
+// differential (explicitly out of scope for now), applies to any
+// diff-eligible worked type -- not callback-only -- with no gap/continuation
+// check. Reuses diffWindowHours' evening+night overlap totals, which
+// together already cover exactly the 17:00-08:00 span.
+function autoDetectDifferentialTech(dateStr, startStr, endStr, entryType) {
+  if (!DIFF_ELIGIBLE_TYPES.has(entryType)) return "none";
+  const { eveningHrs, nightHrs } = diffWindowHours(dateStr, startStr, endStr);
+  return (eveningHrs + nightHrs) >= 4 ? "shift" : "none";
+}
+
 function resolveDifferential(entry) {
   const mode = entry.diffMode || "none";
   if (mode === "none") return "none";
+  if (isTechRole(settings.role)) {
+    if (mode !== "auto") return "shift"; // techs only have one diff type; any manual evening/night/weekend pick just means "yes, apply it"
+    if (!entry.startTime || !entry.endTime) return "none";
+    return autoDetectDifferentialTech(entry.date, entry.startTime, entry.endTime, entry.type);
+  }
   if (mode !== "auto") return mode;
   if (!entry.startTime || !entry.endTime) return "none";
   return autoDetectDifferential(entry.date, entry.startTime, entry.endTime, entry.type);
@@ -886,6 +943,7 @@ function resolveDifferential(entry) {
 function diffRate(entry) {
   const type = resolveDifferential(entry);
   if (type === "none") return 0;
+  if (isTechRole(settings.role)) return type === "shift" ? settings.shiftDiff : 0;
   if (type === "evening") return settings.eveningDiff;
   if (type === "night") return settings.nightDiff;
   if (type === "weekend") return settings.weekendDiff;
@@ -898,19 +956,19 @@ function diffLabel(entry) {
   return entry.diffMode === "auto" ? label + " (auto)" : label;
 }
 
-function computeEntry(entry, priorRegularHours, recalledWithin1hr, gapBeforeMinutes) {
+function computeEntry(entry, priorRegularHours, recalledWithin1hr, gapBeforeMinutes, consecutiveDayFlag) {
   // A skipped meal break is already accounted for in the hours themselves —
   // autoCalcHours() doesn't subtract the standard 30-min meal deduction when
   // mealSkipped is checked, so you're already being paid for that half
   // hour as worked time. There's no separate penalty payment on top of
   // that; an earlier version of this app assumed a flat 1h bonus, but that
   // wasn't confirmed and doesn't show up on real paystubs.
-  return computeEntryBase(entry, priorRegularHours, recalledWithin1hr, gapBeforeMinutes);
+  return computeEntryBase(entry, priorRegularHours, recalledWithin1hr, gapBeforeMinutes, consecutiveDayFlag);
 }
 
 const DIFF_ELIGIBLE_TYPES = new Set(["shift", "training", "callback", "callback_1hr", "extra_shift"]);
 
-function computeEntryBase(entry, priorRegularHours, recalledWithin1hr, gapBeforeMinutes) {
+function computeEntryBase(entry, priorRegularHours, recalledWithin1hr, gapBeforeMinutes, consecutiveDayFlag) {
   const rate = settings.baseRate;
   const otRate = rate * 1.5;
   const dtRate = rate * 2;
@@ -941,16 +999,29 @@ function computeEntryBase(entry, priorRegularHours, recalledWithin1hr, gapBefore
   let diffLine = null;
   if (DIFF_ELIGIBLE_TYPES.has(entry.type)) {
     const diffType = resolveDifferential(entry);
-    const isEveningNight = diffType === "evening" || diffType === "night";
-    const eligibleForType = diffType === "weekend" || CALLBACK_TYPES.has(entry.type);
-    const isContinuation = isEveningNight && gapBeforeMinutes != null && gapBeforeMinutes < settings.continuationGapMinutes;
-    if (diffType !== "none" && eligibleForType && !isContinuation) {
-      const diffPerHour = diffType === "evening" ? settings.eveningDiff
-        : diffType === "night" ? settings.nightDiff
-        : settings.weekendDiff;
-      const diffHours = entry.hours;
-      diffPay = diffHours * diffPerHour;
-      diffLine = { tag: "diff", label: roundQuarter(diffHours) + "h " + diffType + " diff @ $" + diffPerHour.toFixed(2) + "/hr", amt: diffPay };
+    if (isTechRole(settings.role)) {
+      // EX/tech contract: no callback-only restriction, no gap/continuation
+      // check -- any diff-eligible type qualifies purely on whether 4+ hours
+      // of the shift fall in the 5pm-8am window (see
+      // autoDetectDifferentialTech). Weekend differential is out of scope
+      // for techs for now, so diffType here is only ever "shift" or "none".
+      if (diffType === "shift") {
+        const diffHours = entry.hours;
+        diffPay = diffHours * settings.shiftDiff;
+        diffLine = { tag: "diff", label: roundQuarter(diffHours) + "h shift diff @ $" + settings.shiftDiff.toFixed(2) + "/hr", amt: diffPay };
+      }
+    } else {
+      const isEveningNight = diffType === "evening" || diffType === "night";
+      const eligibleForType = diffType === "weekend" || CALLBACK_TYPES.has(entry.type);
+      const isContinuation = isEveningNight && gapBeforeMinutes != null && gapBeforeMinutes < settings.continuationGapMinutes;
+      if (diffType !== "none" && eligibleForType && !isContinuation) {
+        const diffPerHour = diffType === "evening" ? settings.eveningDiff
+          : diffType === "night" ? settings.nightDiff
+          : settings.weekendDiff;
+        const diffHours = entry.hours;
+        diffPay = diffHours * diffPerHour;
+        diffLine = { tag: "diff", label: roundQuarter(diffHours) + "h " + diffType + " diff @ $" + diffPerHour.toFixed(2) + "/hr", amt: diffPay };
+      }
     }
   }
   const addDiff = (result) => {
@@ -1037,6 +1108,55 @@ function computeEntryBase(entry, priorRegularHours, recalledWithin1hr, gapBefore
 
   let hours = entry.hours;
 
+  if (isTechRole(settings.role)) {
+    // EX/tech contract: OT accrues against an 80h/14-day pay period instead
+    // of 40h/week (priorRegularHours and the 80 threshold are period-scoped
+    // by computeWeeks in tech mode, not week-scoped). There's also a second,
+    // independent daily tier this schedule doesn't have: hours beyond the
+    // employee's own regularly-scheduled shift length (8/10/12h, whichever
+    // is shorter than 12) are 1.5x on top of straight time, separate from
+    // the period-OT threshold (Article 12, Section K.1) -- and hours past 12
+    // are still flat 2x regardless of schedule (K.2), same threshold as RN.
+    // consecutiveDayFlag (computed once per computeWeeks pass) means this
+    // calendar day is beyond the contract's consecutive-days-worked limit
+    // (H.1/K.4) -- when true, this whole day's schedule-tier hours are 1.5x
+    // instead of straight time, and don't separately also incur period-OT
+    // (same rate either way -- Article 12.A.1 bars stacking premiums on the
+    // same hours), though they still count toward the running period total
+    // so later days correctly cross the 80h threshold.
+    const S = settings.scheduleHours;
+    const scheduleTier = Math.min(hours, S);
+    const midTier = Math.max(0, Math.min(hours, 12) - S);
+    const dailyDT = Math.max(0, hours - 12);
+    const totalPriorAndThis = priorRegularHours + scheduleTier;
+    const periodOT = consecutiveDayFlag ? 0 : Math.max(0, Math.min(scheduleTier, totalPriorAndThis - 80));
+    const trueRegular = consecutiveDayFlag ? 0 : (scheduleTier - periodOT);
+    const consecutiveDayPremium = consecutiveDayFlag ? scheduleTier : 0;
+
+    const lines = [];
+    let pay = 0;
+    if (trueRegular > 0) {
+      if (entry.restViolation) {
+        const regAmt = trueRegular * rate;
+        const premiumHours = trueRegular * 0.5;
+        const premiumAmt = premiumHours * rate;
+        pay += regAmt + premiumAmt;
+        lines.push({ tag: "reg", label: trueRegular + "h regular", amt: regAmt });
+        lines.push({ tag: "ot", label: premiumHours + "h rest-between-shifts premium (<6h rest)", amt: premiumAmt });
+      } else {
+        const amt = trueRegular * rate;
+        pay += amt;
+        lines.push({ tag: "reg", label: trueRegular + "h regular", amt });
+      }
+    }
+    if (consecutiveDayPremium > 0) { const amt = consecutiveDayPremium * otRate; pay += amt; lines.push({ tag: "ot", label: consecutiveDayPremium + "h @ 1.5x (consecutive days worked)", amt }); }
+    if (periodOT > 0) { const amt = periodOT * otRate; pay += amt; lines.push({ tag: "ot", label: periodOT + "h @ 1.5x (pay-period OT, 80h/14-day)", amt }); }
+    if (midTier > 0) { const amt = midTier * otRate; pay += amt; lines.push({ tag: "ot", label: midTier + "h @ 1.5x (beyond " + S + "h scheduled shift)", amt }); }
+    if (dailyDT > 0) { const amt = dailyDT * dtRate; pay += amt; lines.push({ tag: "dt", label: dailyDT + "h @ 2x (>12h shift)", amt }); }
+
+    return addDiff({ pay, regularHoursAdded: scheduleTier, lines });
+  }
+
   const dailyRegular = Math.min(hours, 12);
   const dailyDT = Math.max(0, hours - 12);
   const totalPriorAndThis = priorRegularHours + dailyRegular;
@@ -1102,7 +1222,33 @@ function entryEndDateTime(entry) {
   return end <= start ? new Date(end.getTime() + 24 * 60 * 60 * 1000) : end;
 }
 
+// Tech contract, Article 12 Sections H.1/K.4: 1.5x on every hour of each day
+// worked once a designated N-hour employee exceeds 6 consecutive 8h shifts /
+// 5 consecutive 10h shifts / 4 consecutive 12h shifts, until a day off
+// breaks the streak. Computed globally across all entries (a streak can
+// span pay-period boundaries -- it's about actual consecutive calendar days
+// worked, not the biweekly cycle), from "shift"/"extra_shift" entries only
+// (a called-in or on-call day isn't a "designated shift" for this purpose).
+// Returns the Set of dates that are beyond the threshold.
+function computeConsecutiveDayFlags(scheduleHours) {
+  const threshold = scheduleHours === 8 ? 6 : scheduleHours === 10 ? 5 : 4;
+  const workDates = [...new Set(entries.filter(e => e.type === "shift" || e.type === "extra_shift").map(e => e.date))].sort();
+  const flagged = new Set();
+  let streak = 0;
+  let prevMs = null;
+  workDates.forEach(dateStr => {
+    const ms = new Date(dateStr + "T00:00:00").getTime();
+    streak = (prevMs !== null && ms - prevMs === 86400000) ? streak + 1 : 1;
+    if (streak > threshold) flagged.add(dateStr);
+    prevMs = ms;
+  });
+  return flagged;
+}
+
 function computeWeeks() {
+  const tech = isTechRole(settings.role);
+  const groupStart = tech ? payPeriodStart : getWeekStart;
+  const consecutiveDayFlags = tech ? computeConsecutiveDayFlags(settings.scheduleHours) : null;
   const byWeek = {};
   const sorted = [...entries].sort((a, b) => {
     const dateCmp = a.date.localeCompare(b.date);
@@ -1140,16 +1286,17 @@ function computeWeeks() {
   }
 
   sorted.forEach(e => {
-    const wk = getWeekStart(e.date);
-    if (!byWeek[wk]) byWeek[wk] = { start: wk, entries: [], total: 0 };
+    const wk = groupStart(e.date);
+    if (!byWeek[wk]) byWeek[wk] = { start: wk, entries: [], total: 0, isPeriod: tech };
   });
   const weekKeys = Object.keys(byWeek).sort();
   weekKeys.forEach(wk => {
     let running = 0;
-    const weekEntries = sorted.filter(e => getWeekStart(e.date) === wk);
+    const weekEntries = sorted.filter(e => groupStart(e.date) === wk);
     weekEntries.forEach(e => {
       const gapBefore = gapBeforeMap.has(e.id) ? gapBeforeMap.get(e.id) : null;
-      const result = computeEntry(e, running, recalledMap.get(e.id) || false, gapBefore);
+      const consecutiveDayFlag = tech && (e.type === "shift" || e.type === "extra_shift") && consecutiveDayFlags.has(e.date);
+      const result = computeEntry(e, running, recalledMap.get(e.id) || false, gapBefore, consecutiveDayFlag);
       running += result.regularHoursAdded;
       byWeek[wk].entries.push({ ...e, result });
       byWeek[wk].total += result.pay;
@@ -1164,7 +1311,7 @@ function computeExpectedSummary(startDate, endDate) {
     regular: 0, weeklyOT: 0, restOT: 0, dailyDT: 0, recallDT: 0,
     onCallStandby: 0, callInStraight: 0, callInPremium: 0,
     training: 0, holiday: 0, compUsed: 0, extraShift: 0,
-    eveningDiff: 0, nightDiff: 0, weekendDiff: 0, pay: 0,
+    eveningDiff: 0, nightDiff: 0, weekendDiff: 0, shiftDiff: 0, pay: 0,
   };
   weeks.forEach(wk => {
     wk.entries.forEach(e => {
@@ -1177,6 +1324,7 @@ function computeExpectedSummary(startDate, endDate) {
         if (diffType === "evening") cats.eveningDiff += diffHours;
         if (diffType === "night") cats.nightDiff += diffHours;
         if (diffType === "weekend") cats.weekendDiff += diffHours;
+        if (diffType === "shift") cats.shiftDiff += diffHours;
       }
 
       if (e.type === "oncall") { cats.onCallStandby += e.hours; return; }
@@ -1236,7 +1384,7 @@ function render() {
 
     const labelGroup = el("div", { style: "display:flex; align-items:baseline; gap:8px;" }, [
       el("span", { class: "arrow", text: isCollapsed ? "▸" : "▾" }),
-      el("span", { class: "label", text: "Week of " + fmtWeek(wk.start) }),
+      el("span", { class: "label", text: (wk.isPeriod ? "Pay period " : "Week of ") + fmtWeek(wk.start, wk.isPeriod ? 14 : 7) }),
     ]);
 
     const header = el("div", { class: "week-header" }, [
@@ -1406,7 +1554,11 @@ function render() {
 
 function updateTypeUI() {
   const type = document.getElementById("entryType").value;
-  document.getElementById("typeNote").textContent = TYPE_INFO[type].note;
+  let note = TYPE_INFO[type].note;
+  if (type === "shift" && isTechRole(settings.role)) {
+    note = "Regular worked shift. Hours beyond your scheduled shift length (up to 12/day) go to 1.5x; hours past 12 go to double time (2x); cumulative regular hours past 80 in the 14-day pay period go to 1.5x. Extra days worked beyond the consecutive-days limit also go to 1.5x.";
+  }
+  document.getElementById("typeNote").textContent = note;
   const hoursInput = document.getElementById("entryHours");
   const diffField = document.getElementById("diffField");
   const startInput = document.getElementById("entryStart");
@@ -1488,15 +1640,28 @@ function cancelEdit() {
   render();
 }
 
+function updatePayRuleFieldVisibility() {
+  const tech = isTechRole(settings.role);
+  document.getElementById("scheduleHoursField").style.display = tech ? "block" : "none";
+  document.getElementById("shiftDiffField").style.display = tech ? "block" : "none";
+  document.getElementById("eveningDiffField").style.display = tech ? "none" : "block";
+  document.getElementById("nightDiffField").style.display = tech ? "none" : "block";
+  document.getElementById("weekendDiffField").style.display = tech ? "none" : "block";
+  document.getElementById("continuationGapField").style.display = tech ? "none" : "block";
+}
+
 function loadSettingsUI() {
   document.getElementById("roleSelect").value = settings.role || "rn";
   document.getElementById("baseRate").value = settings.baseRate;
   document.getElementById("onCallRate").value = settings.onCallRate;
+  document.getElementById("scheduleHours").value = settings.scheduleHours;
   document.getElementById("eveningDiff").value = settings.eveningDiff;
   document.getElementById("nightDiff").value = settings.nightDiff;
   document.getElementById("weekendDiff").value = settings.weekendDiff;
+  document.getElementById("shiftDiff").value = settings.shiftDiff;
   document.getElementById("callbackMinHours").value = settings.callbackMinHours;
   document.getElementById("continuationGapMinutes").value = settings.continuationGapMinutes;
+  updatePayRuleFieldVisibility();
 }
 
 function persistSettings() {
@@ -1515,14 +1680,18 @@ function renderExpectedSummary() {
   const box = document.getElementById("expectedSummary");
   if (!start || !end) { box.innerHTML = ""; return; }
   const s = computeExpectedSummary(start, end);
+  const tech = isTechRole(settings.role);
   const rows = [
-    ["Regular", s.regular], ["Weekly OT (1.5x)", s.weeklyOT], ["OTS – Rest Between Shifts", s.restOT],
+    ["Regular", s.regular], [tech ? "OT (1.5x)" : "Weekly OT (1.5x)", s.weeklyOT], ["OTS – Rest Between Shifts", s.restOT],
     ["Daily double time (2x)", s.dailyDT], ["Recall double time (2x)", s.recallDT],
     ["On-call standby", s.onCallStandby], ["Call-in, straight (≤2h)", s.callInStraight],
     ["Call-in, premium (1.5x)", s.callInPremium], ["Training", s.training], ["Holiday", s.holiday],
     ["Extra shift (ESIP)", s.extraShift],
-    ["Comp time used", s.compUsed], ["Evening diff", s.eveningDiff], ["Night diff", s.nightDiff], ["Weekend diff", s.weekendDiff],
-  ].filter(r => r[1] > 0.001);
+    ["Comp time used", s.compUsed],
+    tech ? ["Shift diff", s.shiftDiff] : ["Evening diff", s.eveningDiff],
+    tech ? null : ["Night diff", s.nightDiff],
+    tech ? null : ["Weekend diff", s.weekendDiff],
+  ].filter(r => r && r[1] > 0.001);
   let html = '<div style="margin-top:10px; padding:12px; background:var(--box-bg); border-radius:8px;">';
   html += '<div style="font-family:var(--mono); font-size:11px; text-transform:uppercase; letter-spacing:.08em; color:var(--ink-soft); margin-bottom:8px;">Expected from tracker</div>';
   rows.forEach(r => { html += `<div class="breakdown-line"><span>${r[0]}</span><b>${r[1].toFixed(2)}h</b></div>`; });
@@ -1604,7 +1773,7 @@ async function init() {
     render();
   });
 
-  ["baseRate", "onCallRate", "eveningDiff", "nightDiff", "weekendDiff", "callbackMinHours", "continuationGapMinutes"].forEach(id => {
+  ["baseRate", "onCallRate", "scheduleHours", "eveningDiff", "nightDiff", "weekendDiff", "shiftDiff", "callbackMinHours", "continuationGapMinutes"].forEach(id => {
     document.getElementById(id).addEventListener("change", (ev) => {
       settings[id] = parseFloat(ev.target.value) || 0;
       persistSettings();
@@ -1621,8 +1790,9 @@ async function init() {
       settings.nightDiff = preset.nightDiff;
       settings.weekendDiff = preset.weekendDiff;
       settings.onCallRate = preset.onCallRate;
-      loadSettingsUI();
+      if (preset.shiftDiff !== undefined) settings.shiftDiff = preset.shiftDiff;
     }
+    loadSettingsUI();
     persistSettings();
     render();
   });
