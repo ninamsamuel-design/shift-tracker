@@ -742,8 +742,14 @@ function splitStandbyForWorked(workedRange) {
 // Returns an array of {start,end} ms fragments with the overlaps removed.
 function trimStandbyRangeAgainstWorked(range) {
   if (!range) return [range];
-  const workedEntries = entries.filter(e => WORKED_TYPES.has(e.type));
-  range = resolveOverlapRange(range, workedEntries);
+  // Deliberately does NOT call resolveOverlapRange here: this range is a
+  // freshly-typed new standby entry with its own unambiguous date, not an
+  // existing entry whose day-label might be off by one. Applying the ±24h
+  // reinterpretation search here caused a confirmed bug: a brand-new,
+  // correctly-dated standby entry with genuinely zero overlap would get
+  // silently swapped for a ±24h-shifted range whenever that shifted window
+  // happened to touch ANY unrelated worked entry, corrupting the new entry
+  // into spurious duplicate fragments of already-existing, unrelated data.
   let fragments = [{ start: range.start, end: range.end }];
   entries.forEach(e => {
     if (!WORKED_TYPES.has(e.type)) return;
