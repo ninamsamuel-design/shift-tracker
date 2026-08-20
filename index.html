@@ -639,7 +639,11 @@ function updateDateDow(inputId, labelId) {
 }
 function getWeekStart(dateStr) {
   const d = new Date(dateStr + "T00:00:00");
-  const day = d.getDay();
+  // Actual pay-period workweek is Saturday-through-Friday, not the calendar
+  // week (Sunday-Saturday). getDay() returns 0=Sun..6=Sat; shifting by +1
+  // and taking mod 7 remaps Saturday to 0 so it's treated as the start of
+  // the week: Sat->0, Sun->1, Mon->2, ... Fri->6.
+  const day = (d.getDay() + 1) % 7;
   d.setDate(d.getDate() - day);
   return localDateStr(d);
 }
