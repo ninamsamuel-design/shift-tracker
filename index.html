@@ -488,7 +488,7 @@ const TYPE_INFO = {
   extra_shift: { label: "Extra shift (ESIP, 1.5x bonus)", note: "" },
   holiday: { label: "Holiday pay", note: "Paid at your regular rate. Doesn't count toward OT accrual — holiday pay is excluded from hours worked for overtime purposes." },
   comp_used: { label: "Compensatory time used", note: "Paid out at your regular rate for this period. Doesn't count toward OT accrual (it's paid leave, not worked time)." },
-  callback: { label: "Called-in", note: "Under the 2-hour minimum: paid straight time for the full 2 hours. At or above 2 hours worked: full worked hours at 1.5x." },
+  callback: { label: "Called-in", note: "Called in from on-call status: 2-hour minimum guarantee at 1.5x, or actual hours at 1.5x, whichever is greater (under 2h always rounds up to 2h @ 1.5x — never straight time). Exception: if you're called in a second time while an earlier call-in's 2-hour guarantee window is still running that day, the second call-in gets no additional guarantee — just actual hours @ 1.5x." },
   callback_1hr: { label: "Call-back within 1 hr of clock-out", note: "Goes straight to double time (2x) for all hours." },
   callback_cancelled: { label: "Call-back, case cancelled", note: "First 15 min at 1.5x, remaining time up to the 2-hour minimum at straight time — flat payout regardless of hours entered." },
   oncall: { label: "On-call standby", note: "Paid at the flat on-call rate; doesn't count toward OT. Log the whole standby block as one entry, start to end (needs both times) — if a call-in happens partway through, log that separately as its own shift/callback entry and the app will automatically carve the standby around it. Example: on call 19:00–07:00, called in 22:00–23:30 → log the on-call as 19:00–07:00 and the callback as 22:00–23:30; the app splits the standby into two pieces (19:00–22:00 and 23:30–07:00) for you. If you're called in with no break, log that portion as a shift/recall entry instead." },
@@ -965,19 +965,19 @@ function diffLabel(entry) {
   return entry.diffMode === "auto" ? label + " (auto)" : label;
 }
 
-function computeEntry(entry, priorRegularHours, recalledWithin1hr, gapBeforeMinutes, consecutiveDayFlag) {
+function computeEntry(entry, priorRegularHours, recalledWithin1hr, gapBeforeMinutes, consecutiveDayFlag, noGuarantee) {
   // A skipped meal break is already accounted for in the hours themselves —
   // autoCalcHours() doesn't subtract the standard 30-min meal deduction when
   // mealSkipped is checked, so you're already being paid for that half
   // hour as worked time. There's no separate penalty payment on top of
   // that; an earlier version of this app assumed a flat 1h bonus, but that
   // wasn't confirmed and doesn't show up on real paystubs.
-  return computeEntryBase(entry, priorRegularHours, recalledWithin1hr, gapBeforeMinutes, consecutiveDayFlag);
+  return computeEntryBase(entry, priorRegularHours, recalledWithin1hr, gapBeforeMinutes, consecutiveDayFlag, noGuarantee);
 }
 
 const DIFF_ELIGIBLE_TYPES = new Set(["shift", "training", "callback", "callback_1hr", "extra_shift"]);
 
-function computeEntryBase(entry, priorRegularHours, recalledWithin1hr, gapBeforeMinutes, consecutiveDayFlag) {
+function computeEntryBase(entry, priorRegularHours, recalledWithin1hr, gapBeforeMinutes, consecutiveDayFlag, noGuarantee) {
   const rate = settings.baseRate;
   const otRate = rate * 1.5;
   const dtRate = rate * 2;
@@ -1095,24 +1095,33 @@ function computeEntryBase(entry, priorRegularHours, recalledWithin1hr, gapBefore
   }
 
   if (entry.type === "callback") {
-    // On-call call-in — per PTU manager email: worked time under the call-in
-    // minimum (default 2h) is paid at STRAIGHT time for the full minimum
-    // (e.g. called in 10:56-12:38, worked 1.75h, paid 2h @ straight, not 1.5x).
-    // Once actual worked hours meet or exceed the minimum, the full worked
-    // hours are paid at 1.5x (shown on real paystubs as separate "regular"
-    // + incremental premium lines, which together equal 1.5x).
-    // NOT modeled: if a second call-in starts before the first call-in's
-    // minimum window elapses, the manager's email says the guarantee window
-    // is reduced by the overlap rather than restarting — handle that
-    // rare case manually until this is built out.
+    // On-call call-in — confirmed against the actual union contract (not a
+    // secondhand email): "A Nurse who is called in to the work site from
+    // on-call status shall receive two (2) hours pay at time and one-half,
+    // or time and one-half pay for hours actually worked, whichever is
+    // greater." Both sides of that comparison are at 1.5x -- there's no
+    // straight-time tier at all -- so this reduces to: actual hours under
+    // 2 round UP to 2h, paid at 1.5x, shown as REG + T50 (50%) premium
+    // split to match how it posts on the real paystub. EXCEPT: "if the
+    // Nurse returns to work from on-call status a second time during the
+    // initial two-hour guarantee period, no additional guarantee shall
+    // apply" -- noGuarantee (computed in computeWeeks) means an earlier
+    // call-in's 2h window is already running, so this one is paid actual
+    // hours only, no floor.
     const worked = entry.hours;
-    const underMin = worked < settings.callbackMinHours;
-    const hours = Math.max(worked, settings.callbackMinHours);
-    const pay = hours * (underMin ? rate : otRate);
-    const label = underMin
-      ? hours + "h @ straight time (call-in minimum, under " + settings.callbackMinHours + "h worked)"
-      : hours + "h @ 1.5x (call-in)";
-    return addDiff({ pay, regularHoursAdded: hours, lines: [{ tag: underMin ? "reg" : "ot", label, amt: pay }] });
+    const hours = noGuarantee ? worked : Math.max(worked, settings.callbackMinHours);
+    const regAmt = hours * rate;
+    const premiumAmt = hours * 0.5 * rate;
+    const pay = regAmt + premiumAmt;
+    const label = noGuarantee
+      ? hours + "h @ 1.5x (call-in, no additional guarantee -- second call within 2h window)"
+      : (worked < settings.callbackMinHours
+          ? hours + "h @ 1.5x (call-in minimum guarantee, " + worked + "h worked)"
+          : hours + "h @ 1.5x (call-in)");
+    return addDiff({ pay, regularHoursAdded: hours, lines: [
+      { tag: "reg", label: hours + "h regular (call-in)", amt: regAmt },
+      { tag: "ot", label: hours + "h T50 premium (call-in) — " + label, amt: premiumAmt },
+    ] });
   }
 
   let hours = entry.hours;
@@ -1294,6 +1303,27 @@ function computeWeeks() {
     if (cur.type === "callback" && gapMin > 0 && gapMin < 60) recalledMap.set(cur.id, true);
   }
 
+  // Per the actual union contract (On-Call section): a call-in from on-call
+  // status gets a 2-hour guarantee at 1.5x, OR actual hours at 1.5x,
+  // whichever is greater -- EXCEPT "if the Nurse returns to work from
+  // on-call status a second time during the initial two-hour guarantee
+  // period, no additional guarantee shall apply" (just actual hours, no
+  // floor, for that second call). The guarantee window is anchored to the
+  // first call's start and doesn't reset with each subsequent call within
+  // it -- a call starting after the window has fully elapsed becomes a new
+  // anchor with its own guarantee.
+  const noGuaranteeMap = new Map();
+  let guaranteeWindowAnchorMs = null;
+  sorted.forEach(e => {
+    if (e.type !== "callback" || !e.startTime || !isValidTimeStr(e.startTime)) return;
+    const startMs = entryDateTime(e.date, e.startTime).getTime();
+    if (guaranteeWindowAnchorMs !== null && startMs - guaranteeWindowAnchorMs < 120 * 60000) {
+      noGuaranteeMap.set(e.id, true);
+    } else {
+      guaranteeWindowAnchorMs = startMs;
+    }
+  });
+
   sorted.forEach(e => {
     const wk = groupStart(e.date);
     if (!byWeek[wk]) byWeek[wk] = { start: wk, entries: [], total: 0, isPeriod: tech };
@@ -1305,7 +1335,7 @@ function computeWeeks() {
     weekEntries.forEach(e => {
       const gapBefore = gapBeforeMap.has(e.id) ? gapBeforeMap.get(e.id) : null;
       const consecutiveDayFlag = tech && (e.type === "shift" || e.type === "extra_shift") && consecutiveDayFlags.has(e.date);
-      const result = computeEntry(e, running, recalledMap.get(e.id) || false, gapBefore, consecutiveDayFlag);
+      const result = computeEntry(e, running, recalledMap.get(e.id) || false, gapBefore, consecutiveDayFlag, noGuaranteeMap.get(e.id) || false);
       running += result.regularHoursAdded;
       byWeek[wk].entries.push({ ...e, result });
       byWeek[wk].total += result.pay;
@@ -1344,10 +1374,12 @@ function computeExpectedSummary(startDate, endDate) {
       if (e.type === "callback_1hr") { cats.recallDT += e.hours; return; }
       if (e.type === "callback_cancelled") { return; }
       if (e.type === "callback") {
-        e.result.lines.forEach(l => {
-          if (l.tag === "reg") cats.callInStraight += parseFloat(l.label);
-          if (l.tag === "ot") cats.callInPremium += parseFloat(l.label);
-        });
+        // No more straight-time tier -- callback pay is always 1.5x now (see
+        // computeEntryBase). Both the reg and ot lines carry the same paid
+        // hours (the REG+T50 split just matches how it posts on the real
+        // paystub), so only count one of them to avoid doubling the total.
+        const regLine = e.result.lines.find(l => l.tag === "reg");
+        if (regLine) cats.callInPremium += parseFloat(regLine.label);
         return;
       }
       // shift only, from here down
@@ -1714,8 +1746,8 @@ function renderExpectedSummary() {
   const rows = [
     ["Regular", s.regular], [tech ? "OT (1.5x)" : "Weekly OT (1.5x)", s.weeklyOT], ["OTS – Rest Between Shifts", s.restOT],
     ["Daily double time (2x)", s.dailyDT], ["Recall double time (2x)", s.recallDT],
-    ["On-call standby", s.onCallStandby], ["Call-in, straight (≤2h)", s.callInStraight],
-    ["Call-in, premium (1.5x)", s.callInPremium], ["Training", s.training], ["Holiday", s.holiday],
+    ["On-call standby", s.onCallStandby],
+    ["Call-in (1.5x)", s.callInPremium], ["Training", s.training], ["Holiday", s.holiday],
     ["Extra shift (ESIP)", s.extraShift],
     ["Comp time used", s.compUsed],
     tech ? ["Shift diff", s.shiftDiff] : ["Evening diff", s.eveningDiff],
