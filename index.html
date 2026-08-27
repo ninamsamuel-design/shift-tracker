@@ -1551,6 +1551,9 @@ function render() {
         ]),
         meta,
       ]);
+      if (members.some(isDuplicateEntry)) {
+        left.appendChild(el("div", { class: "dup-warning", text: "⚠ Possible duplicate — two blocks share the same date and hours; expand to see which" }));
+      }
       left.addEventListener("click", () => {
         if (isExpanded) members.forEach(m => expandedEntryIds.delete(m.id));
         else members.forEach(m => expandedEntryIds.add(m.id));
@@ -1563,6 +1566,9 @@ function render() {
           const line = el("div", { style: "display:flex; align-items:center; gap:8px; margin-top:2px;" });
           const timeLabel = (m.startTime && m.endTime) ? (m.startTime + "–" + m.endTime) : (m.hours + "h");
           line.appendChild(el("span", { text: timeLabel + " (" + m.hours + "h) — " + money(m.result.pay) }));
+          if (isDuplicateEntry(m)) {
+            line.appendChild(el("span", { class: "dup-warning", text: "⚠ Possible duplicate" }));
+          }
           const miniEdit = el("button", { class: "edit", text: "✎", title: "Edit this block" });
           miniEdit.addEventListener("click", (ev) => { ev.stopPropagation(); loadEntryForEdit(m.id); });
           const miniDel = el("button", { class: "del", text: "✕", title: "Remove this block" });
@@ -1868,7 +1874,16 @@ async function init() {
 
   document.getElementById("cancelEditBtn").addEventListener("click", cancelEdit);
 
+  let addBtnBusy = false;
   document.getElementById("addBtn").addEventListener("click", () => {
+    // Guards against a rapid double-click/double-tap silently adding the
+    // same entry twice -- the handler itself is fully synchronous, so a
+    // flag reset at the end of this function offers no protection against
+    // back-to-back clicks; it needs to persist across a short real delay.
+    if (addBtnBusy) return;
+    addBtnBusy = true;
+    setTimeout(() => { addBtnBusy = false; }, 700);
+
     const type = document.getElementById("entryType").value;
     const date = document.getElementById("entryDate").value;
     const hoursVal = document.getElementById("entryHours").value;
