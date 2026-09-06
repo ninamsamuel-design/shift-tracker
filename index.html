@@ -339,7 +339,7 @@
         <label for="entryType">Type</label>
         <select id="entryType">
           <option value="shift">Scheduled shift</option>
-          <option value="training">Training / orientation</option>
+          <option value="training">Education Time</option>
           <option value="extra_shift">Extra shift (ESIP, 1.5x bonus)</option>
           <option value="holiday">Holiday pay</option>
           <option value="comp_used">Compensatory time used</option>
@@ -484,7 +484,7 @@ function payPeriodStart(dateStr) {
 
 const TYPE_INFO = {
   shift: { label: "Scheduled shift", note: "Regular worked shift. Hours past 12 in this entry go to double time (2x); cumulative regular hours past 40 for the week go to 1.5x." },
-  training: { label: "Training / orientation", note: "Paid at your regular rate. Does not count toward daily or weekly OT accrual (educational/orientation time is excluded from overtime calculations)." },
+  training: { label: "Education Time", note: "Paid at your regular rate. Does not count toward daily or weekly OT accrual, and doesn't receive any shift differential — educational time is excluded from both overtime and differential calculations." },
   extra_shift: { label: "Extra shift (ESIP, 1.5x bonus)", note: "" },
   holiday: { label: "Holiday pay", note: "Paid at your regular rate. Doesn't count toward OT accrual — holiday pay is excluded from hours worked for overtime purposes." },
   comp_used: { label: "Compensatory time used", note: "Paid out at your regular rate for this period. Doesn't count toward OT accrual (it's paid leave, not worked time)." },
@@ -977,7 +977,11 @@ function computeEntry(entry, priorRegularHours, recalledWithin1hr, gapBeforeMinu
   return computeEntryBase(entry, priorRegularHours, recalledWithin1hr, gapBeforeMinutes, consecutiveDayFlag, noGuarantee);
 }
 
-const DIFF_ELIGIBLE_TYPES = new Set(["shift", "training", "callback", "callback_1hr", "extra_shift"]);
+// Education Time (type "training") is deliberately excluded: it doesn't
+// receive any shift differential -- weekend or otherwise -- confirmed
+// against a real paystub showing weekend diff wrongly applied to a
+// training/education entry.
+const DIFF_ELIGIBLE_TYPES = new Set(["shift", "callback", "callback_1hr", "extra_shift"]);
 
 function computeEntryBase(entry, priorRegularHours, recalledWithin1hr, gapBeforeMinutes, consecutiveDayFlag, noGuarantee) {
   const rate = settings.baseRate;
@@ -1061,7 +1065,7 @@ function computeEntryBase(entry, priorRegularHours, recalledWithin1hr, gapBefore
     // Paid leave/training time — regular rate, no OT accrual, regardless of
     // how many hours or what else happened that day/week.
     const pay = entry.hours * rate;
-    const labelMap = { holiday: "h holiday pay", comp_used: "h comp time used", training: "h training pay" };
+    const labelMap = { holiday: "h holiday pay", comp_used: "h comp time used", training: "h education pay" };
     return addDiff({ pay, regularHoursAdded: 0, lines: [{ tag: "reg", label: entry.hours + labelMap[entry.type], amt: pay }] });
   }
 
@@ -1627,7 +1631,7 @@ function updateTypeUI() {
       hoursInput.value = (type === "oncall") ? "8" : (type === "training" ? "4" : ((type === "holiday" || type === "comp_used") ? "8" : "12"));
     }
   }
-  diffField.style.display = (type === "oncall" || type === "comp_used") ? "none" : "block";
+  diffField.style.display = (type === "oncall" || type === "comp_used" || type === "training") ? "none" : "block";
   document.getElementById("timeFields").style.display = (type === "callback_cancelled" || type === "comp_used") ? "none" : "grid";
   document.getElementById("mealField").style.display = (type === "oncall" || type === "callback_cancelled" || type === "comp_used") ? "none" : "block";
   document.getElementById("restField").style.display = (type === "shift") ? "block" : "none";
@@ -1755,7 +1759,7 @@ function renderExpectedSummary() {
     ["Regular", s.regular], [tech ? "OT (1.5x)" : "Weekly OT (1.5x)", s.weeklyOT], ["OTS – Rest Between Shifts", s.restOT],
     ["Daily double time (2x)", s.dailyDT], ["Recall double time (2x)", s.recallDT],
     ["On-call standby", s.onCallStandby],
-    ["Call-in (1.5x)", s.callInPremium], ["Training", s.training], ["Holiday", s.holiday],
+    ["Call-in (1.5x)", s.callInPremium], ["Education Time", s.training], ["Holiday", s.holiday],
     ["Extra shift (ESIP)", s.extraShift],
     ["Comp time used", s.compUsed],
     tech ? ["Shift diff", s.shiftDiff] : ["Evening diff", s.eveningDiff],
@@ -1889,7 +1893,7 @@ async function init() {
     const type = document.getElementById("entryType").value;
     const date = document.getElementById("entryDate").value;
     const hoursVal = document.getElementById("entryHours").value;
-    const diffApplies = type === "shift" || type === "training" || type === "callback" || type === "callback_1hr" || type === "extra_shift";
+    const diffApplies = type === "shift" || type === "callback" || type === "callback_1hr" || type === "extra_shift";
     const diffMode = diffApplies ? document.getElementById("entryDiff").value : "none";
     const startTime = document.getElementById("entryStart").value;
     const endTime = document.getElementById("entryEnd").value;
