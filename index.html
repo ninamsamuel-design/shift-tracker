@@ -602,7 +602,20 @@ function computeWorkdayBundles(allEntries) {
   const workdays = [];
   let current = null;
   timed.forEach(it => {
-    if (!current || it.startMs >= current.windowEnd) {
+    // A "shift" (regularly scheduled duty) ALWAYS anchors its own fresh
+    // workday and never gets swept into an earlier one, even if it starts
+    // inside a still-open 24h window -- confirmed as a real bug against
+    // Nina's own live data: two ordinary, independently-scheduled 12h
+    // shifts on consecutive calendar days (e.g. 9/1 07:09 and 9/2 07:08,
+    // ~11h45m of real rest between them) start barely under 24h apart and
+    // were wrongly bundled into one 23.5h workday, fabricating ~11.5h of
+    // daily double time that has nothing to do with Rule 1's intent
+    // (bundling genuine on-call call-backs within a rolling 24h day).
+    // Only "training" and "callback" -- which represent a continuation of
+    // being on/called into duty, not a fresh independently-scheduled
+    // shift -- can join an already-open bundle.
+    const forcesNewWorkday = it.entry.type === "shift" || !current || it.startMs >= current.windowEnd;
+    if (forcesNewWorkday) {
       current = { anchorDate: it.entry.date, windowStart: it.startMs, windowEnd: it.startMs + 24 * 3600000, entries: [] };
       workdays.push(current);
     }
