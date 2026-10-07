@@ -618,18 +618,26 @@ function computeWorkdayBundles(allEntries) {
     // Only "training" and "callback" -- which represent a continuation of
     // being on/called into duty, not a fresh independently-scheduled
     // shift -- can join an already-open bundle.
-    // UPDATE: a scheduled shift DOES join a workday that was opened by a
-    // call-in from on-call (confirmed: Sun 9/13 09:49 call-in + Mon 9/14
-    // 05:38 shift = one 16.5h workday, 4.5h daily OT), because the call-in
-    // started the 24h clock and the shift's first punch falls inside it. It
-    // still never joins a workday opened by another scheduled shift.
+    // A scheduled shift joins an open workday ONLY when it rolls straight out
+    // of a call-in in that workday (the call-in's clock-out is the shift's
+    // clock-in: no gap). Confirmed both ways against real paystubs:
+    //  - Sun 9/13 09:49 call-in ... Mon 9/14 05:38 call-in rolling into the
+    //    scheduled shift = ONE 16.5h workday (4.5h daily OT).
+    //  - Thu 8/6 19:08 call-in and the ordinary Fri 8/7 07:08 shift 12h later
+    //    are TWO workdays (the 8/02-8/15 stub's 7.75h daily OT only works
+    //    out without that merge), just like two back-to-back scheduled shifts.
+    // Training and call-ins still join any workday whose 24h window is open.
+    const rollsFromCallIn = it.entry.type === "shift" && current && current.lastType === "callback"
+      && it.startMs - current.lastEndMs <= 5 * 60000;
     const forcesNewWorkday = !current || it.startMs >= current.windowEnd
-      || (it.entry.type === "shift" && current.anchorType !== "callback");
+      || (it.entry.type === "shift" && !rollsFromCallIn);
     if (forcesNewWorkday) {
       current = { anchorDate: it.entry.date, anchorType: it.entry.type, windowStart: it.startMs, windowEnd: it.startMs + 24 * 3600000, entries: [] };
       workdays.push(current);
     }
     current.entries.push(it.entry);
+    current.lastType = it.entry.type;
+    current.lastEndMs = entryEndDateTime(it.entry).getTime();
   });
   untimed.forEach(e => workdays.push({ anchorDate: e.date, anchorType: e.type, windowStart: null, windowEnd: null, entries: [e] }));
   return workdays;
@@ -712,9 +720,14 @@ function computeNoGuaranteeMap(allEntries) {
       return d !== 0 ? d : entryTimeSortKey(a) - entryTimeSortKey(b);
     });
   const noGuaranteeMap = new Map();
+  // A call-in that rolls straight into the scheduled shift is just the shift
+  // starting early -- there's no release, so no 2h guarantee applies.
+  const shiftStarts = allEntries.filter(x => x.type === "shift" && isValidTimeStr(x.startTime || "")).map(x => entryDateTime(x.date, x.startTime).getTime());
   let guaranteeWindowAnchorMs = null;
   sorted.forEach(e => {
     const startMs = entryDateTime(e.date, e.startTime).getTime();
+    const endMs = entryEndDateTime(e);
+    if (endMs && shiftStarts.some(ss => Math.abs(ss - endMs.getTime()) <= 5 * 60000)) { noGuaranteeMap.set(e.id, true); return; }
     if (guaranteeWindowAnchorMs !== null && startMs - guaranteeWindowAnchorMs < 120 * 60000) {
       noGuaranteeMap.set(e.id, true);
     } else {

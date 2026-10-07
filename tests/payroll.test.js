@@ -91,9 +91,15 @@ console.log("\nrule tests (synthetic entries)");
   let ls = lines([E("a", "2026-10-06", "shift", 11.75, "07:09", "19:24"), E("b", "2026-10-07", "shift", 11.75, "07:08", "19:23")]);
   t("consecutive scheduled shifts stay separate workdays (no daily OT)", !ls.some(l => l.label.includes(">12h workday")));
 
-  ls = lines([E("c", "2026-10-11", "callback", 3.25, "09:49", "12:53"), E("s", "2026-10-12", "shift", 13.25, "05:38", "19:23")]);
-  t("call-in + next-day shift inside 24h = one workday, 4.5h daily OT", has(ls, "s", "4.5h OT-Double (>12h workday)"));
-  t("workday that began with a call-in gets T50 on its 12 non-OT hours", has(ls, "c", "3.25h Time On Call – 50%") && has(ls, "s", "8.75h Time On Call – 50%"));
+  ls = lines([E("c", "2026-10-11", "callback", 3.25, "09:49", "12:53"), E("c2", "2026-10-12", "callback", 1.25, "05:38", "07:00"), E("s", "2026-10-12", "shift", 12, "07:00", "19:23")]);
+  t("call-in rolling straight into the shift = one workday, 4.5h daily OT", has(ls, "s", "4.5h OT-Double (>12h workday)"));
+  t("workday that began with a call-in gets T50 on its 12 non-OT hours", has(ls, "c", "3.25h Time On Call – 50%") && has(ls, "c2", "1.25h Time On Call – 50%") && has(ls, "s", "7.5h Time On Call – 50%"));
+  const guar = JSON.parse(run("JSON.stringify([...computeNoGuaranteeMap(entries)])"));
+  t("a call-in that rolls into the shift gets no 2h guarantee", guar.some(x => x[0] === "c2"));
+
+  ls = lines([E("u", "2026-10-15", "callback", 5, "19:08", "00:09"), E("v", "2026-10-16", "shift", 11.75, "07:08", "19:28")]);
+  t("call-in followed by an ordinary shift next morning stays two workdays (no daily OT)", !ls.some(l => l.label.includes(">12h workday")));
+  t("...and the call-in's own workday still gets T50", has(ls, "u", "5h Time On Call – 50%") && !has(ls, "v", "T50"));
 
   ls = lines([E("d", "2026-10-06", "shift", 11, "07:00", "18:30"), E("e", "2026-10-06", "callback", 3, "20:00", "23:00")]);
   t("workday that began with a scheduled shift gets NO T50", !ls.some(l => l.label.includes("T50")));
