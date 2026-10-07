@@ -311,7 +311,7 @@
       <div class="field" id="weekendDiffField">
         <label for="weekendDiff">Weekend differential ($/hr)</label>
         <input type="number" step="0.01" id="weekendDiff">
-        <p class="type-note" style="margin-top:6px; margin-bottom:0;">Applies automatically to any worked hours (including Education Time and call-ins) that fall inside the window below — not tied to the manual differential dropdown, and not mutually exclusive with evening/night diff.</p>
+        <p class="type-note" style="margin-top:6px; margin-bottom:0;">Paid on the WHOLE entry when it starts inside the window below (inferred from your paystubs — not split by clock time). Applies automatically to shifts, Education Time and call-ins; not tied to the manual differential dropdown.</p>
       </div>
       <div class="field" id="weekendWindowField">
         <label>Weekend differential window</label>
@@ -327,12 +327,17 @@
           </select>
           <input type="text" id="weekendDiffEndTime" inputmode="numeric" placeholder="HH:MM" maxlength="5">
         </div>
-        <p class="type-note" style="margin-top:6px; margin-bottom:0;">Start day/time through end day/time, recurring every week. Defaults to Fri 19:00 – Mon 07:00 — double-check against your contract.</p>
+        <p class="type-note" style="margin-top:6px; margin-bottom:0;">An entry counts if it STARTS between the start and end below, every week. Defaults to Fri 20:45 – Mon 00:00, which is what reproduces your real paystubs so far.</p>
       </div>
       <div class="field" id="certPayField">
         <label for="certPay">Certification pay ($/week)</label>
         <input type="number" step="0.01" id="certPay">
-        <p class="type-note" style="margin-top:6px; margin-bottom:0;">Flat amount added once per workweek (Sun–Sat) that has any logged entries.</p>
+        <p class="type-note" style="margin-top:6px; margin-bottom:0;">Flat amount added once per workweek (Sun–Sat) that has any logged entries, for weeks starting on or before the date below.</p>
+      </div>
+      <div class="field" id="certPayEndField">
+        <label for="certPayEndDate">Certification pay last paid through</label>
+        <input type="date" id="certPayEndDate">
+        <p class="type-note" style="margin-top:6px; margin-bottom:0;">Weeks starting after this date get no certification pay. Clear it if certification is active again.</p>
       </div>
       <div class="field" id="shiftDiffField" style="display:none;">
         <label for="shiftDiff">Shift differential, 5pm–8am ($/hr)</label>
@@ -385,7 +390,7 @@
     <div class="field" id="restField" style="display:none;">
       <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
         <input type="checkbox" id="entryRest" style="width:auto;">
-        Less than 6 hours of sleep? Click here for 1.5x. Note: ticket will need to be filed with HTS for it to show on your paycheck, file a note on HealthTime.
+        Rest between shifts: applied automatically when you clock out of a call-back and clock in for a shift within 6 hours. Tick only to force it. A ticket still needs to be filed with HTS for it to show on your paycheck — file a note on HealthTime.
       </label>
     </div>
     <div class="field" id="longCallField" style="display:none;">
@@ -478,11 +483,16 @@ const DEFAULT_SETTINGS = {
   baseRate: 0, eveningDiff: 3.25, nightDiff: 5.00, weekendDiff: 3.80, shiftDiff: 3.00,
   onCallRate: 20, callbackMinHours: 2, continuationGapMinutes: 60, role: "rn", scheduleHours: 12,
   certPay: 20.77,
-  // Weekend differential window (RN, Rule 5): confirmed Fri 19:00 -- Mon
-  // 07:00, applies to ALL worked hours in the window (including training
-  // and call-ins), replacing the old calendar-Saturday/Sunday check.
-  weekendDiffStartDow: 5, weekendDiffStartTime: "19:00",
-  weekendDiffEndDow: 1, weekendDiffEndTime: "07:00",
+  // Certification lapsed: last paid for the week ending 2026-09-12. Weeks
+  // starting after this date get no certification pay. Blank = never ends.
+  certPayEndDate: "2026-09-12",
+  // Weekend differential window (RN). INFERRED from paystubs: payroll pays
+  // the differential on the WHOLE entry when the entry STARTS inside this
+  // window (not proportionally by clock time). Fri 20:45 -> Mon 00:00 is
+  // what reproduces every real paystub so far (a Fri 20:00 call-back unpaid,
+  // a Fri 20:45 call-back paid, a Mon 05:38 start unpaid).
+  weekendDiffStartDow: 5, weekendDiffStartTime: "20:45",
+  weekendDiffEndDow: 1, weekendDiffEndTime: "00:00",
 };
 
 // Differential/on-call presets by job title. RN rates confirmed against real
@@ -525,11 +535,11 @@ function payPeriodStart(dateStr) {
 
 const TYPE_INFO = {
   shift: { label: "Scheduled shift", note: "Regular worked shift. For RN: pools with any other worked entries that fall in the same 24-hour workday (starting at your first punch) — hours past 12 in that workday go to double time; cumulative regular+training+call-in hours past 40 for the week go to overtime-straight." },
-  training: { label: "Education Time", note: "Paid at your regular rate. Pools into the same workday/weekly OT accrual as a scheduled shift (Rule 3) — but never receives evening/night differential; it IS eligible for weekend differential." },
+  training: { label: "Education Time", note: "Paid at your regular rate and counted in Regular Pay (your supervisor codes it separately for unit purposes only). Pools into the same workday/weekly OT as a scheduled shift; no evening/night differential, but eligible for weekend differential." },
   extra_shift: { label: "Extra shift (ESIP, 1.5x bonus)", note: "" },
-  holiday: { label: "Holiday-Regular pay", note: "Paid at your regular rate. Doesn't count toward OT accrual — holiday pay is excluded from hours worked for overtime purposes, and never reduces the weekly OT threshold for hours you actually worked." },
+  holiday: { label: "Holiday-Regular pay", note: "Paid at your regular rate and never itself overtime. Its hours DO count toward the 40-hour weekly threshold, but hours past 40 only pay the 1.5x premium once your actual worked hours exceed 40." },
   comp_used: { label: "Compensatory time used", note: "Paid out at your regular rate for this period. Doesn't count toward OT accrual (it's paid leave, not worked time)." },
-  callback: { label: "Called-in", note: "Payroll mode (what shows on your paycheck): call-in hours pool into the same workday/weekly OT engine as a scheduled shift — no separate call-in premium, just whatever Rules 2–3 produce. Contract mode (verification only): your contract guarantees a 2-hour minimum at 1.5x, or actual hours at 1.5x, whichever is greater — except hours that already qualify for 2x under daily OT just pay 2x (no stacking). The Verify-against-paystub view flags any call-in hours where payroll mode paid less than contract mode would require." },
+  callback: { label: "Called-in", note: "Payroll mode (what shows on your paycheck): call-in hours pool into the same workday/weekly OT engine as a scheduled shift. If a workday BEGINS with a call-in from on-call, its non-overtime hours also get Time On Call – 50% (T50, inferred from one paystub); a call-back later in a workday that began with a scheduled shift gets no premium. Contract mode (verification only): your contract guarantees a 2-hour minimum at 1.5x, or actual hours at 1.5x, whichever is greater — except hours that already qualify for 2x under daily OT just pay 2x (no stacking). The Verify-against-paystub view flags any call-in hours where payroll mode paid less than contract mode would require." },
   callback_1hr: { label: "Call-back within 1 hr of clock-out", note: "Goes straight to double time (2x) for all hours — a manual override, not pooled into the workday engine." },
   callback_cancelled: { label: "Call-back, case cancelled", note: "First 15 min at 1.5x, remaining time up to the 2-hour minimum at straight time — flat payout regardless of hours entered." },
   oncall: { label: "On-call standby", note: "Paid at the flat on-call rate; doesn't count toward OT. Log the whole standby block as one entry, start to end (needs both times) — if a call-in happens partway through, log that separately as its own shift/callback entry and the app will automatically carve the standby around it. Example: on call 19:00–07:00, called in 22:00–23:30 → log the on-call as 19:00–07:00 and the callback as 22:00–23:30; the app splits the standby into two pieces (19:00–22:00 and 23:30–07:00) for you. If you're called in with no break, log that portion as a shift/recall entry instead. Full weekend on-call days are 24h — log start/end 24h apart (or enter 24 directly)." },
@@ -547,17 +557,15 @@ const TYPE_INFO = {
 // double-time -- reproduced exactly by this bundling logic.
 const WORKDAY_POOL_TYPES = new Set(["shift", "training", "callback"]);
 
-// Rule 5 (RN weekend differential): worked hours -- INCLUDING training and
-// call-ins, per explicit instruction -- that fall inside a recurring
-// Fri 19:00-Mon 07:00 window (settings-configurable) get $/hr weekend
-// diff, computed as the fraction of the entry's clock-time span that
-// overlaps the window. This replaces the old calendar-Saturday/Sunday
-// check for RN, and is INTENTIONALLY unconditional/automatic (not gated
-// by diffMode, and not mutually exclusive with evening/night diff) --
-// confirmed correct even when it means the tracker shows MORE than what a
-// real paystub paid (e.g. a call-back that should have gotten weekend diff
-// but didn't on the actual stub): that's a real payroll shortfall to flag,
-// not a reason to suppress the calculation.
+// Rule 5 (RN weekend differential), INFERRED from real paystubs rather than
+// stated in the contract: payroll pays the differential on the WHOLE entry
+// when the entry STARTS inside the window (settings: default Fri 20:45 ->
+// Mon 00:00), and nothing otherwise -- NOT proportionally by clock time.
+// That's the only simple rule that reproduces every stub so far: a Fri 20:00
+// call-back (spanning into Saturday) unpaid, a Fri 20:45 call-back paid in
+// full, a Sat 02:28 call-in paid, a Sun call-in paid, a Mon 05:38 start
+// unpaid. Applies to training and call-ins too, automatically (not gated by
+// the manual differential dropdown, and not exclusive with evening/night).
 const WEEKEND_DIFF_TYPES = new Set(["shift", "training", "callback", "callback_1hr", "extra_shift"]);
 
 function weekendWindowBoundsNear(dateStr) {
@@ -573,18 +581,13 @@ function weekendWindowBoundsNear(dateStr) {
     return { start: base + (hS * 60 + mS) * 60000, end: base + daysToEnd * 86400000 + (hE * 60 + mE) * 60000 };
   });
 }
-function weekendWindowOverlapHours(dateStr, startMs, endMs) {
-  return weekendWindowBoundsNear(dateStr).reduce((sum, w) => sum + Math.max(0, Math.min(endMs, w.end) - Math.max(startMs, w.start)), 0) / 3600000;
-}
 function weekendDiffHoursForEntry(entry) {
   if (!WEEKEND_DIFF_TYPES.has(entry.type)) return 0;
   if (!entry.startTime || !entry.endTime || !isValidTimeStr(entry.startTime) || !isValidTimeStr(entry.endTime)) return 0;
   const range = entryRangeMs(entry.date, entry.startTime, entry.endTime);
   if (!range) return 0;
-  const rawHours = (range.end - range.start) / 3600000;
-  if (rawHours <= 0) return 0;
-  const overlapHours = weekendWindowOverlapHours(entry.date, range.start, range.end);
-  return roundQuarter(Math.min(1, overlapHours / rawHours) * entry.hours);
+  const inWindow = weekendWindowBoundsNear(entry.date).some(w => range.start >= w.start && range.start < w.end);
+  return inWindow ? entry.hours : 0;
 }
 
 // Builds the workday bundles (Rule 1) from every WORKDAY_POOL_TYPES entry
@@ -615,14 +618,20 @@ function computeWorkdayBundles(allEntries) {
     // Only "training" and "callback" -- which represent a continuation of
     // being on/called into duty, not a fresh independently-scheduled
     // shift -- can join an already-open bundle.
-    const forcesNewWorkday = it.entry.type === "shift" || !current || it.startMs >= current.windowEnd;
+    // UPDATE: a scheduled shift DOES join a workday that was opened by a
+    // call-in from on-call (confirmed: Sun 9/13 09:49 call-in + Mon 9/14
+    // 05:38 shift = one 16.5h workday, 4.5h daily OT), because the call-in
+    // started the 24h clock and the shift's first punch falls inside it. It
+    // still never joins a workday opened by another scheduled shift.
+    const forcesNewWorkday = !current || it.startMs >= current.windowEnd
+      || (it.entry.type === "shift" && current.anchorType !== "callback");
     if (forcesNewWorkday) {
-      current = { anchorDate: it.entry.date, windowStart: it.startMs, windowEnd: it.startMs + 24 * 3600000, entries: [] };
+      current = { anchorDate: it.entry.date, anchorType: it.entry.type, windowStart: it.startMs, windowEnd: it.startMs + 24 * 3600000, entries: [] };
       workdays.push(current);
     }
     current.entries.push(it.entry);
   });
-  untimed.forEach(e => workdays.push({ anchorDate: e.date, windowStart: null, windowEnd: null, entries: [e] }));
+  untimed.forEach(e => workdays.push({ anchorDate: e.date, anchorType: e.type, windowStart: null, windowEnd: null, entries: [e] }));
   return workdays;
 }
 
@@ -638,40 +647,48 @@ function computeWorkdayTiers(allEntries) {
       const h = e.hours;
       const dailyTierHours = Math.max(0, Math.min(h, 12 - running));
       const dailyDTHours = h - dailyTierHours;
-      tiers.set(e.id, { dailyTierHours, dailyDTHours });
+      tiers.set(e.id, { dailyTierHours, dailyDTHours, callInWorkday: wd.anchorType === "callback" });
       running += h;
     });
   });
   return tiers;
 }
 
-// Rule 3 (weekly OT): a running total per Sunday-Saturday workweek, built
-// from each pool entry's dailyTierHours (i.e. NOT hours already counted as
-// daily OT -- per Nina's confirmation, holiday hours never enter this
-// count and never reduce the 40h threshold either). ESIP/extra_shift keeps
-// its existing always-flat-1.5x mechanism untouched, but its hours still
-// consume the weekly bucket exactly as they always have, so it can still
-// push LATER same-week pool hours into overtime-straight.
-// Returns Map(entry.id -> {trueRegularHours, weeklyOTHours}) for pool entries.
+// Rule 3 (weekly OT): a running total per Sunday-Saturday workweek. CORRECTED
+// against real paystubs (an earlier version excluded holiday): paid holiday
+// hours DO count toward the 40, alongside regular, training, call-in and
+// ESIP hours, but never beyond what daily OT already took (each pool entry
+// contributes only its dailyTierHours). Hours past 40 on a worked entry are
+// coded OT-Straight. BUT they only PAY the 1.5x premium when actual worked
+// hours (holiday excluded) exceed 40; where holiday is what pushed the
+// total over 40 and worked hours alone are 40 or less, the same OT-Straight
+// hours pay just 1x. That is why 8/30-9/12's 4.75 OT-Straight hours (36.75
+// worked + 8 holiday) came out at plain 1x on the real stub.
+// ESIP/extra_shift keeps its flat-1.5x mechanism but still fills the bucket.
+// Returns Map(entry.id -> {trueRegularHours, weeklyOTHours, weeklyOT15Hours})
+// for pool entries: weeklyOTHours = all OT-Straight-coded hours,
+// weeklyOT15Hours = the subset that pays 1.5x.
 function computeWeeklyOTTiers(allEntries, workdayTiers) {
-  const relevant = allEntries.filter(e => WORKDAY_POOL_TYPES.has(e.type) || e.type === "extra_shift");
+  const relevant = allEntries.filter(e => WORKDAY_POOL_TYPES.has(e.type) || e.type === "extra_shift" || e.type === "holiday");
   const sorted = relevant.slice().sort((a, b) => {
     const d = a.date.localeCompare(b.date);
     return d !== 0 ? d : entryTimeSortKey(a) - entryTimeSortKey(b);
   });
   const result = new Map();
-  const weekRunning = {};
+  const running = {};
   sorted.forEach(e => {
     const wk = getWeekStart(e.date);
-    if (weekRunning[wk] === undefined) weekRunning[wk] = 0;
+    if (!running[wk]) running[wk] = { all: 0, worked: 0 };
+    const r = running[wk];
+    if (e.type === "holiday") { r.all += e.hours; return; }
     const contributed = e.type === "extra_shift" ? e.hours : workdayTiers.get(e.id).dailyTierHours;
     if (e.type !== "extra_shift") {
-      const priorTotal = weekRunning[wk];
-      const weeklyOTHours = Math.max(0, Math.min(contributed, priorTotal + contributed - 40));
-      const trueRegularHours = contributed - weeklyOTHours;
-      result.set(e.id, { trueRegularHours, weeklyOTHours });
+      const weeklyOTHours = Math.max(0, Math.min(contributed, r.all + contributed - 40));
+      const weeklyOT15Hours = Math.max(0, Math.min(weeklyOTHours, r.worked + contributed - 40));
+      result.set(e.id, { trueRegularHours: contributed - weeklyOTHours, weeklyOTHours, weeklyOT15Hours });
     }
-    weekRunning[wk] += contributed;
+    r.all += contributed;
+    r.worked += contributed;
   });
   return result;
 }
@@ -1205,7 +1222,9 @@ function computeEntry(entry, ctx) {
 const DIFF_ELIGIBLE_TYPES = new Set(["shift", "callback", "callback_1hr", "extra_shift"]);
 
 function computeEntryBase(entry, ctx) {
-  const { priorRegularHours, gapBeforeMinutes, consecutiveDayFlag, workdayTier, weeklyTier } = ctx;
+  const { priorRegularHours, gapBeforeMinutes, consecutiveDayFlag, workdayTier, weeklyTier, restAuto } = ctx;
+  // Rest-between-shifts: auto-detected (see computeWeeks) or manually forced.
+  const restViolation = !!(entry.restViolation || restAuto);
   const rate = settings.baseRate;
   const otRate = rate * 1.5;
   const dtRate = rate * 2;
@@ -1367,7 +1386,7 @@ function computeEntryBase(entry, ctx) {
     const lines = [];
     let pay = 0;
     if (trueRegular > 0) {
-      if (entry.restViolation) {
+      if (restViolation) {
         const regAmt = trueRegular * rate;
         const premiumHours = trueRegular * 0.5;
         const premiumAmt = premiumHours * rate;
@@ -1402,16 +1421,18 @@ function computeEntryBase(entry, ctx) {
   // workday with no weekly-OT if the tiers weren't supplied (shouldn't
   // happen in normal use -- computeWeeks always builds them).
   const wt = workdayTier || { dailyTierHours: entry.hours, dailyDTHours: 0 };
-  const kt = weeklyTier || { trueRegularHours: wt.dailyTierHours, weeklyOTHours: 0 };
+  const kt = weeklyTier || { trueRegularHours: wt.dailyTierHours, weeklyOTHours: 0, weeklyOT15Hours: 0 };
   const trueRegular = kt.trueRegularHours;
   const weeklyOT = kt.weeklyOTHours;
+  const weeklyOT15 = kt.weeklyOT15Hours || 0;
+  const weeklyOT1x = weeklyOT - weeklyOT15;
   const dailyDT = wt.dailyDTHours;
-  const regLabelSuffix = entry.type === "training" ? " (education)" : entry.type === "callback" ? " (call-in)" : "";
+  const regLabelSuffix = entry.type === "training" ? " (education, counted as regular)" : entry.type === "callback" ? " (call-in)" : "";
 
   const lines = [];
   let pay = 0;
   if (trueRegular > 0) {
-    if (entry.restViolation) {
+    if (restViolation) {
       // Per PTU manager email: a <6h-rest day doesn't post as one 1.5x line on
       // the real paystub. HTS enters the base hours as ordinary Regular Pay,
       // plus a separate "OTS – Rest Between Shifts" line for HALF those hours
@@ -1431,9 +1452,20 @@ function computeEntryBase(entry, ctx) {
       lines.push({ tag: "reg", label: trueRegular + "h regular" + regLabelSuffix, amt });
     }
   }
-  // Rule 3: hours over 40/week (excluding anything already daily-OT) --
-  // coded OT-Straight, full 1.5x, regardless of source type.
-  if (weeklyOT > 0) { const amt = weeklyOT * otRate; pay += amt; lines.push({ tag: "ot", label: weeklyOT + "h OT-Straight (weekly, >40h)", amt }); }
+  // T50 "Time On Call - 50%" (INFERRED from a single paystub, 9/13 -> 9/14):
+  // when a workday BEGINS with a call-in from on-call, every hour in that
+  // workday that isn't already overtime gets an extra 0.5x. A workday that
+  // begins with a scheduled shift gets none, even with a call-back later.
+  if (wt.callInWorkday && trueRegular > 0) {
+    const t50Amt = trueRegular * 0.5 * rate;
+    pay += t50Amt;
+    lines.push({ tag: "ot", label: trueRegular + "h Time On Call – 50% (T50, inferred: workday began with a call-in)", amt: t50Amt });
+  }
+  // Rule 3: hours past 40/week (holiday counts toward the 40, see
+  // computeWeeklyOTTiers) are coded OT-Straight; they pay 1.5x only for the
+  // part where actual worked hours exceed 40, otherwise plain 1x.
+  if (weeklyOT15 > 0) { const amt = weeklyOT15 * otRate; pay += amt; lines.push({ tag: "ot", label: weeklyOT15 + "h OT-Straight (weekly, worked >40h) @ 1.5x", amt }); }
+  if (weeklyOT1x > 0) { const amt = weeklyOT1x * rate; pay += amt; lines.push({ tag: "ot", label: weeklyOT1x + "h OT-Straight (weekly, over 40 counting holiday; worked ≤40h) @ 1x", amt }); }
   // Rule 2: hours past 12 in the workday -- payroll splits this into an
   // OT-Straight (1x) line and an OT-Double (+1x) line, same hour count,
   // together totaling 2x. Both lines carry the SAME hours; only sum one of
@@ -1546,6 +1578,26 @@ function computeWeeks() {
   const workdayTiers = tech ? null : computeWorkdayTiers(entries);
   const weeklyOTTiers = tech ? null : computeWeeklyOTTiers(entries, workdayTiers);
 
+  // Rest between shifts (auto): applies only when you CLOCK OUT of a
+  // call-back and then CLOCK IN for a scheduled shift 6 hours or less later.
+  // A zero gap (call-in rolling straight into the shift, no clock-out in
+  // between) does not count. The pay treatment once triggered is unchanged.
+  const restAutoMap = new Map();
+  const timedWorked = sorted.filter(e => WORKED_TYPES.has(e.type) && isValidTimeStr(e.startTime || "") && isValidTimeStr(e.endTime || ""));
+  timedWorked.forEach(cur => {
+    if (cur.type !== "shift") return;
+    const curStart = entryDateTime(cur.date, cur.startTime);
+    let prev = null;
+    timedWorked.forEach(o => {
+      if (o.id === cur.id) return;
+      const oEnd = entryEndDateTime(o);
+      if (oEnd && oEnd <= curStart && (!prev || oEnd > prev.end)) prev = { entry: o, end: oEnd };
+    });
+    if (!prev || (prev.entry.type !== "callback" && prev.entry.type !== "callback_1hr")) return;
+    const gapMin = (curStart - prev.end) / 60000;
+    if (gapMin > 0 && gapMin <= 360) restAutoMap.set(cur.id, true);
+  });
+
   sorted.forEach(e => {
     const wk = groupStart(e.date);
     if (!byWeek[wk]) byWeek[wk] = { start: wk, entries: [], total: 0, isPeriod: tech, certPay: 0 };
@@ -1563,6 +1615,7 @@ function computeWeeks() {
         consecutiveDayFlag,
         workdayTier: workdayTiers ? workdayTiers.get(e.id) : null,
         weeklyTier: weeklyOTTiers ? weeklyOTTiers.get(e.id) : null,
+        restAuto: restAutoMap.get(e.id) || false,
       });
       running += result.regularHoursAdded;
       byWeek[wk].entries.push({ ...e, result });
@@ -1570,7 +1623,7 @@ function computeWeeks() {
     });
     // Rule 7 (RN only): flat certification pay, once per workweek that has
     // any logged entries at all.
-    if (!tech && weekEntries.length > 0) {
+    if (!tech && weekEntries.length > 0 && (!settings.certPayEndDate || wk <= settings.certPayEndDate)) {
       byWeek[wk].certPay = settings.certPay;
       byWeek[wk].total += settings.certPay;
     }
@@ -1582,10 +1635,35 @@ function blankCats() {
   return {
     regular: 0, weeklyOT: 0, restOT: 0, dailyDT: 0, recallDT: 0,
     onCallStandby: 0, callInPremium: 0,
-    training: 0, holiday: 0, compUsed: 0, extraShift: 0,
+    holiday: 0, compUsed: 0, extraShift: 0,
     eveningDiff: 0, nightDiff: 0, weekendDiff: 0, shiftDiff: 0,
-    otStraight: 0, otDouble: 0, certPay: 0, pay: 0,
+    otStraight: 0, otDouble: 0, t50: 0, certPay: 0, pay: 0,
+    // dollars per pay code, rounded to cents per code the way the paystub
+    // does, then summed (payRounded) -- the unrounded running total is `pay`.
+    codes: {}, payRounded: 0,
   };
+}
+
+function round2(x) { return Math.round((x + 1e-9) * 100) / 100; }
+
+function payCodeFor(e, l) {
+  if (l.tag === "diff") return l.label.includes("evening") ? "diff_evening" : l.label.includes("night") ? "diff_night" : l.label.includes("weekend") ? "diff_weekend" : "diff_shift";
+  if (e.type === "oncall") return "toc";
+  if (e.type === "holiday") return "holiday";
+  if (e.type === "comp_used") return "comp";
+  if (e.type === "extra_shift") return "esip";
+  if (e.type === "callback_cancelled") return "callback_cancelled";
+  if (e.type === "callback_1hr") return "recall";
+  if (l.tag === "reg") return "regular";
+  if (l.tag === "dt") return "odh";
+  if (l.label.includes("T50")) return "t50";
+  if (l.label.includes("<6h rest")) return "rest";
+  if (l.label.includes("OT-Straight")) return "ots";
+  return "ot_other";
+}
+
+function finalizeCatsPay(cats) {
+  cats.payRounded = Object.values(cats.codes).reduce((t, d) => t + round2(d), 0);
 }
 
 // Tallies one already-computed entry (payroll mode, from computeWeeks) into
@@ -1594,6 +1672,10 @@ function blankCats() {
 // Regular-Training, etc.) matching the real paystub's pay-code names.
 function tallyEntryIntoCats(cats, e, tech) {
   cats.pay += e.result.pay;
+  e.result.lines.forEach(l => {
+    const code = payCodeFor(e, l);
+    cats.codes[code] = (cats.codes[code] || 0) + l.amt;
+  });
   e.result.lines.forEach(l => {
     if (l.tag !== "diff") return;
     const diffHours = parseFloat(l.label);
@@ -1609,7 +1691,7 @@ function tallyEntryIntoCats(cats, e, tech) {
   if (e.type === "extra_shift") { cats.extraShift += e.hours; return; }
   if (e.type === "callback_1hr") { cats.recallDT += e.hours; return; }
   if (e.type === "callback_cancelled") { return; }
-  if (e.type === "training" && tech) { cats.training += e.hours; return; }
+  if (e.type === "training" && tech) { cats.regular += e.hours; return; } // education pays 1x, counted in Regular
   if (e.type === "callback" && tech) {
     // Tech callback: unchanged 2h-min-or-actual @ 1.5x, always one reg + one
     // ot(T50) line carrying the same hours -- only count one.
@@ -1636,10 +1718,11 @@ function tallyEntryIntoCats(cats, e, tech) {
   e.result.lines.forEach(l => {
     const h = parseFloat(l.label);
     if (l.tag === "reg") {
-      if (e.type === "training") cats.training += h;
-      else cats.regular += h;
+      cats.regular += h; // training/education is counted in Regular, not its own category
     } else if (l.tag === "dt") {
       cats.otDouble += h; // "h OT-Double (>12h workday)"
+    } else if (l.tag === "ot" && l.label.includes("T50")) {
+      cats.t50 += h;
     } else if (l.tag === "ot" && l.label.includes("<6h rest")) {
       cats.restOT += h;
     } else if (l.tag === "ot") {
@@ -1680,7 +1763,12 @@ function computeExpectedSummary(startDate, endDate) {
           // any 2h-minimum "padding" hours payroll never paid for at all.
           const guaranteedTotal = noGuarantee ? e.hours : Math.max(e.hours, settings.callbackMinHours);
           const paddingHours = Math.max(0, guaranteedTotal - e.hours);
-          const underpaidHours = roundQuarter((wot ? wot.trueRegularHours : 0) + paddingHours);
+          // T50 (workday began with a call-in) lifts the non-overtime hours to
+          // 1.5x, so only OT-Straight hours paid at 1x -- and, without T50,
+          // the plain-regular hours -- still fall short.
+          const regularShort = (wdt && wdt.callInWorkday) ? 0 : (wot ? wot.trueRegularHours : 0);
+          const ots1x = wot ? (wot.weeklyOTHours - wot.weeklyOT15Hours) : 0;
+          const underpaidHours = roundQuarter(regularShort + ots1x + paddingHours);
           flags.push({ date: e.date, hours: underpaidHours, delta: contractPay - payrollWagePay });
         }
       }
@@ -1688,11 +1776,13 @@ function computeExpectedSummary(startDate, endDate) {
     if (!tech && wk.start >= startDate && wk.start <= endDate && wk.certPay > 0) {
       wkCats.certPay += wk.certPay;
       wkCats.pay += wk.certPay;
+      wkCats.codes.cert = (wkCats.codes.cert || 0) + wk.certPay;
     }
+    finalizeCatsPay(wkCats);
     if (wk.entries.some(e => e.date >= startDate && e.date <= endDate) || (!tech && wk.start >= startDate && wk.start <= endDate && wk.certPay > 0)) {
       byWeek.push({ start: wk.start, isPeriod: wk.isPeriod, cats: wkCats });
     }
-    Object.keys(period).forEach(k => { period[k] += wkCats[k]; });
+    Object.keys(period).forEach(k => { if (k !== "codes") period[k] += wkCats[k]; });
   });
   return { period, weeks: byWeek, flags };
 }
@@ -2065,6 +2155,7 @@ function updatePayRuleFieldVisibility() {
   document.getElementById("weekendDiffField").style.display = tech ? "none" : "block";
   document.getElementById("weekendWindowField").style.display = tech ? "none" : "block";
   document.getElementById("certPayField").style.display = tech ? "none" : "block";
+  document.getElementById("certPayEndField").style.display = tech ? "none" : "block";
   document.getElementById("continuationGapField").style.display = tech ? "none" : "block";
 }
 
@@ -2080,6 +2171,7 @@ function loadSettingsUI() {
   document.getElementById("callbackMinHours").value = settings.callbackMinHours;
   document.getElementById("continuationGapMinutes").value = settings.continuationGapMinutes;
   document.getElementById("certPay").value = settings.certPay;
+  document.getElementById("certPayEndDate").value = settings.certPayEndDate || "";
   document.getElementById("weekendDiffStartDow").value = settings.weekendDiffStartDow;
   document.getElementById("weekendDiffStartTime").value = settings.weekendDiffStartTime;
   document.getElementById("weekendDiffEndDow").value = settings.weekendDiffEndDow;
@@ -2124,16 +2216,17 @@ function summaryRows(cats, tech) {
       ["Regular", cats.regular], ["OT (1.5x)", cats.weeklyOT], ["OTS – Rest Between Shifts", cats.restOT],
       ["Daily double time (2x)", cats.dailyDT], ["Recall double time (2x)", cats.recallDT],
       ["On-call standby", cats.onCallStandby], ["Call-in (1.5x)", cats.callInPremium],
-      ["Education Time", cats.training], ["Holiday", cats.holiday],
+      ["Holiday", cats.holiday],
       ["Extra shift (ESIP)", cats.extraShift], ["Comp time used", cats.compUsed],
       ["Shift diff", cats.shiftDiff],
     ];
   }
   return [
-    ["Regular Pay", cats.regular], ["Regular-Training", cats.training],
+    ["Regular Pay (incl. education time)", cats.regular],
     ["Overtime Pay-Straight", cats.otStraight], ["Overtime Pay-Double", cats.otDouble],
     ["OTS – Rest Between Shifts", cats.restOT], ["Recall double time (2x)", cats.recallDT],
     ["Holiday-Regular", cats.holiday], ["Time On Call", cats.onCallStandby],
+    ["Time On Call - 50% (T50, inferred)", cats.t50],
     ["Evening diff", cats.eveningDiff], ["Night diff", cats.nightDiff],
     ["Weekend Differential", cats.weekendDiff],
     ["Extra shift (ESIP)", cats.extraShift], ["Comp time used", cats.compUsed],
@@ -2146,7 +2239,7 @@ function renderCatsBlock(title, cats, tech) {
   html += '<div style="font-family:var(--mono); font-size:11px; text-transform:uppercase; letter-spacing:.08em; color:var(--ink-soft); margin-bottom:8px;">' + title + '</div>';
   rows.forEach(r => { html += `<div class="breakdown-line"><span>${r[0]}</span><b>${r[1].toFixed(2)}h</b></div>`; });
   if (!tech && cats.certPay > 0.001) html += `<div class="breakdown-line"><span>Certification Pay</span><b>${money(cats.certPay)}</b></div>`;
-  html += `<div class="breakdown-line" style="border-top:1px solid var(--line); margin-top:6px; padding-top:8px;"><span>Total pay (payroll mode)</span><b>${money(cats.pay)}</b></div>`;
+  html += `<div class="breakdown-line" style="border-top:1px solid var(--line); margin-top:6px; padding-top:8px;"><span>Total pay (payroll mode, per-code rounded)</span><b>${money(cats.payRounded)}</b></div>`;
   html += '</div>';
   return html;
 }
@@ -2263,6 +2356,13 @@ async function init() {
       render();
       renderExpectedSummary();
     });
+  });
+
+  document.getElementById("certPayEndDate").addEventListener("change", (ev) => {
+    settings.certPayEndDate = ev.target.value || "";
+    persistSettings();
+    render();
+    renderExpectedSummary();
   });
 
   ["weekendDiffStartDow", "weekendDiffEndDow"].forEach(id => {
