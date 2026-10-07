@@ -424,6 +424,7 @@
       <button class="btn-primary" id="addBtn">Add entry</button>
       <button class="btn-ghost" id="cancelEditBtn" style="display:none;">Cancel</button>
     </div>
+    <div id="standbyNotice" class="dup-warning" style="display:none; margin-top:10px; line-height:1.5;"></div>
   </div>
 
   <div class="card">
@@ -1700,6 +1701,57 @@ function isDuplicateEntry(entry) {
   return entries.some(other => other.id !== entry.id && other.date === entry.date && other.hours === entry.hours);
 }
 
+// Non-blocking sanity check for an on-call standby entry. Standby is paid
+// flat per stored hour, so an overlap with another standby entry pays those
+// hours twice, and an entry stores only a date + two clock times, so it
+// can't represent a block over 24h -- if the stored hours disagree with the
+// times (e.g. 28h against 19:30-23:30) the pay and the overlap/split logic
+// are working from two different answers.
+// The range used for the overlap check: the entry's own start/end, unless
+// its stored hours say it's actually longer (a >24h block, which the
+// date + two clock times can't express) -- then trust the hours, since
+// that's what gets paid.
+function standbyCheckRange(e) {
+  const r = entryRangeMs(e.date, e.startTime, e.endTime);
+  if (!r) return null;
+  const timeHours = (r.end - r.start) / 3600000;
+  if (e.hours > timeHours + 0.25) return { start: r.start, end: r.start + e.hours * 3600000 };
+  return r;
+}
+
+function standbyProblems(entry) {
+  if (entry.type !== "oncall") return [];
+  const problems = [];
+  if (!entry.startTime || !entry.endTime) {
+    problems.push("no start/end time, so it can't be checked against call-ins or other standby");
+    return problems;
+  }
+  const r = standbyCheckRange(entry);
+  if (!r) return problems;
+  const timeHours = roundQuarter((entryRangeMs(entry.date, entry.startTime, entry.endTime).end - r.start) / 3600000);
+  if (entry.hours > 24 || Math.abs(entry.hours - timeHours) > 0.25) {
+    problems.push("hours (" + entry.hours + "h) don't match its start/end times (" + timeHours + "h) — a single entry can't span more than 24h");
+  }
+  entries.forEach(o => {
+    if (o.id === entry.id || o.type !== "oncall" || !o.startTime || !o.endTime) return;
+    const or = standbyCheckRange(o);
+    if (!or) return;
+    const overlapMs = Math.min(r.end, or.end) - Math.max(r.start, or.start);
+    if (overlapMs > 0) {
+      problems.push("overlaps another standby entry (" + o.date + " " + o.startTime + "–" + o.endTime + ") by " + +(overlapMs / 3600000).toFixed(2) + "h — those hours would be paid twice");
+    }
+  });
+  return problems;
+}
+
+function showStandbyNotice(messages) {
+  const box = document.getElementById("standbyNotice");
+  if (!box) return;
+  box.innerHTML = "";
+  messages.forEach(m => box.appendChild(el("div", { text: "⚠ " + m })));
+  box.style.display = messages.length ? "block" : "none";
+}
+
 function updateRateWarning() {
   const w = document.getElementById("rateWarning");
   if (w) w.style.display = settings.baseRate ? "none" : "block";
@@ -1807,6 +1859,7 @@ function render() {
         if (isDuplicateEntry(e)) {
           left.appendChild(el("div", { class: "dup-warning", text: "⚠ Possible duplicate — same date and hours as another entry" }));
         }
+        standbyProblems(e).forEach(p => left.appendChild(el("div", { class: "dup-warning", text: "⚠ On-call: " + p })));
         if (isExpanded) {
           const details = el("div", { class: "entry-details" });
           if (e.startTime) details.appendChild(el("div", { text: "Start: " + e.startTime }));
@@ -1862,6 +1915,9 @@ function render() {
       if (members.some(isDuplicateEntry)) {
         left.appendChild(el("div", { class: "dup-warning", text: "⚠ Possible duplicate — two blocks share the same date and hours; expand to see which" }));
       }
+      if (members.some(m => standbyProblems(m).length > 0)) {
+        left.appendChild(el("div", { class: "dup-warning", text: "⚠ On-call: one or more blocks overlap, don't match their times, or have no times; expand to see which" }));
+      }
       left.addEventListener("click", () => {
         if (isExpanded) members.forEach(m => expandedEntryIds.delete(m.id));
         else members.forEach(m => expandedEntryIds.add(m.id));
@@ -1877,6 +1933,8 @@ function render() {
           if (isDuplicateEntry(m)) {
             line.appendChild(el("span", { class: "dup-warning", text: "⚠ Possible duplicate" }));
           }
+          const mProblems = standbyProblems(m);
+          if (mProblems.length) line.appendChild(el("span", { class: "dup-warning", text: "⚠ " + mProblems.join("; ") }));
           const miniEdit = el("button", { class: "edit", text: "✎", title: "Edit this block" });
           miniEdit.addEventListener("click", (ev) => { ev.stopPropagation(); loadEntryForEdit(m.id); });
           const miniDel = el("button", { class: "del", text: "✕", title: "Remove this block" });
@@ -2282,6 +2340,8 @@ async function init() {
       warnIfUncheckableStandby(date);
     }
     const wasEditing = !!editingId;
+    const savedEditId = editingId;
+    const idsBeforeSave = new Set(entries.map(x => x.id));
     if (editingId) {
       const idx = entries.findIndex(x => x.id === editingId);
       if (idx !== -1) {
@@ -2303,6 +2363,10 @@ async function init() {
     render();
     renderExpectedSummary();
     showAddBtnFeedback(wasEditing ? "Saved ✓" : "Added ✓");
+    // Non-blocking: the entry is already saved; this just flags anything
+    // off about the on-call block(s) just added or edited.
+    const touchedStandby = entries.filter(x => x.type === "oncall" && (x.id === savedEditId || !idsBeforeSave.has(x.id)));
+    showStandbyNotice(touchedStandby.flatMap(x => standbyProblems(x).map(p => "On-call " + x.date + " " + (x.startTime || "") + "–" + (x.endTime || "") + ": " + p)));
   });
 
   document.getElementById("entryDate").addEventListener("input", () => updateDateDow("entryDate", "entryDateDow"));
