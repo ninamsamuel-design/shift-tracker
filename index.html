@@ -396,7 +396,7 @@
     <div class="field" id="longCallField" style="display:none;">
       <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
         <input type="checkbox" id="entryLongCall" style="width:auto;">
-        Weekly long call (same $/hr as regular on-call — just labeled separately for your own reference)
+        Weekly long call — just a tag for your own reference; it doesn't change pay
       </label>
     </div>
     <div class="grid2" id="timeFields">
@@ -542,7 +542,7 @@ const TYPE_INFO = {
   callback: { label: "Called-in", note: "Payroll mode (what shows on your paycheck): call-in hours pool into the same workday/weekly OT engine as a scheduled shift. If a workday BEGINS with a call-in from on-call, its non-overtime hours also get Time On Call – 50% (T50, inferred from one paystub); a call-back later in a workday that began with a scheduled shift gets no premium. Contract mode (verification only): your contract guarantees a 2-hour minimum at 1.5x, or actual hours at 1.5x, whichever is greater — except hours that already qualify for 2x under daily OT just pay 2x (no stacking). The Verify-against-paystub view flags any call-in hours where payroll mode paid less than contract mode would require." },
   callback_1hr: { label: "Call-back within 1 hr of clock-out", note: "Goes straight to double time (2x) for all hours — a manual override, not pooled into the workday engine." },
   callback_cancelled: { label: "Call-back, case cancelled", note: "First 15 min at 1.5x, remaining time up to the 2-hour minimum at straight time — flat payout regardless of hours entered." },
-  oncall: { label: "On-call standby", note: "Paid at the flat on-call rate; doesn't count toward OT. Log the whole standby block as one entry, start to end (needs both times) — if a call-in happens partway through, log that separately as its own shift/callback entry and the app will automatically carve the standby around it. Example: on call 19:00–07:00, called in 22:00–23:30 → log the on-call as 19:00–07:00 and the callback as 22:00–23:30; the app splits the standby into two pieces (19:00–22:00 and 23:30–07:00) for you. If you're called in with no break, log that portion as a shift/recall entry instead. Full weekend on-call days are 24h — log start/end 24h apart (or enter 24 directly)." },
+  oncall: { label: "On-call standby", note: "Paid at the flat on-call rate; doesn't count toward OT. Log the whole standby block as one entry, start to end (needs both times) — if a call-in happens partway through, log that separately as its own shift/callback entry and the app will automatically carve the standby around it." },
 };
 
 // Rule 1 (RN workday): entries that pool together across a rolling 24-hour
