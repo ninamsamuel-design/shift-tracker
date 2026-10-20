@@ -393,12 +393,6 @@
         Rest between shifts: applied automatically when you clock out of a call-back and clock in for a shift within 6 hours. Tick only to force it. A ticket still needs to be filed with HTS for it to show on your paycheck — file a note on HealthTime.
       </label>
     </div>
-    <div class="field" id="longCallField" style="display:none;">
-      <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
-        <input type="checkbox" id="entryLongCall" style="width:auto;">
-        Weekly long call — just a tag for your own reference; it doesn't change pay
-      </label>
-    </div>
     <div class="grid2" id="timeFields">
       <div class="field">
         <label for="entryStart">Start time</label>
@@ -973,12 +967,12 @@ function fmtTimeFromMs(ms) {
   return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
 }
 
-function makeStandbyFragment(startMs, endMs, longCall) {
+function makeStandbyFragment(startMs, endMs) {
   const hours = roundQuarter((endMs - startMs) / 3600000);
   return {
     id: uid(), date: fmtDateFromMs(startMs), type: "oncall", hours,
     diffMode: "none", startTime: fmtTimeFromMs(startMs), endTime: fmtTimeFromMs(endMs),
-    restViolation: false, longCall: !!longCall,
+    restViolation: false,
   };
 }
 
@@ -1330,8 +1324,7 @@ function computeEntryBase(entry, ctx) {
 
   if (entry.type === "oncall") {
     const pay = entry.hours * settings.onCallRate;
-    const label = entry.longCall ? "h on-call (weekly long call)" : "h on-call";
-    return { pay, regularHoursAdded: 0, lines: [{ tag: "oncall", label: entry.hours + label, amt: pay }] };
+    return { pay, regularHoursAdded: 0, lines: [{ tag: "oncall", label: entry.hours + "h on-call", amt: pay }] };
   }
   if (entry.type === "callback_cancelled") {
     // First 15 min of a cancelled call-back is paid at 1.5x, the rest of
@@ -2094,7 +2087,6 @@ function updateTypeUI() {
       hoursInput.value = (type === "oncall") ? "8" : (type === "training" ? "4" : ((type === "holiday" || type === "comp_used") ? "8" : "12"));
     }
   }
-  document.getElementById("longCallField").style.display = (type === "oncall") ? "block" : "none";
   diffField.style.display = (type === "oncall" || type === "comp_used" || type === "training") ? "none" : "block";
   document.getElementById("timeFields").style.display = (type === "callback_cancelled" || type === "comp_used") ? "none" : "grid";
   document.getElementById("mealField").style.display = (type === "oncall" || type === "callback_cancelled" || type === "comp_used") ? "none" : "block";
@@ -2119,7 +2111,6 @@ function loadEntryForEdit(id) {
   document.getElementById("entryEnd").value = e.endTime || "";
   document.getElementById("entryRest").checked = !!e.restViolation;
   document.getElementById("entryMealSkipped").checked = !!e.mealSkipped;
-  document.getElementById("entryLongCall").checked = !!e.longCall;
   updateTypeUI();
   document.getElementById("formHeading").textContent = "Edit entry";
   document.getElementById("addBtn").textContent = "Save changes";
@@ -2151,7 +2142,6 @@ function cancelEdit() {
   document.getElementById("entryEnd").value = "";
   document.getElementById("entryRest").checked = false;
   document.getElementById("entryMealSkipped").checked = false;
-  document.getElementById("entryLongCall").checked = false;
   document.getElementById("entryDiff").value = "auto";
   document.getElementById("entryDate").value = localDateStr(new Date());
   updateDateDow("entryDate", "entryDateDow");
@@ -2441,7 +2431,6 @@ async function init() {
     const endTime = document.getElementById("entryEnd").value;
     const restViolation = document.getElementById("entryRest").checked;
     const mealSkipped = document.getElementById("entryMealSkipped").checked;
-    const longCall = type === "oncall" && document.getElementById("entryLongCall").checked;
     if (!date) { alert("Pick a date."); return; }
     if (type !== "callback_cancelled" && (!hoursVal || parseFloat(hoursVal) <= 0)) { alert("Enter hours."); return; }
     if (type === "oncall" && (!startTime || !endTime)) { alert("Enter a start and end time for on-call/standby entries, so call-ins that land inside this window can be subtracted automatically."); return; }
@@ -2458,7 +2447,7 @@ async function init() {
     if (editingId) {
       const idx = entries.findIndex(x => x.id === editingId);
       if (idx !== -1) {
-        entries[idx] = { id: editingId, date, type, hours: parseFloat(hoursVal) || 0, diffMode, startTime, endTime, restViolation, mealSkipped, longCall };
+        entries[idx] = { id: editingId, date, type, hours: parseFloat(hoursVal) || 0, diffMode, startTime, endTime, restViolation, mealSkipped };
       }
       cancelEdit();
     } else if (type === "oncall" && startTime && endTime) {
@@ -2467,10 +2456,10 @@ async function init() {
       if (fragments.length === 0) {
         alert("This on-call window is fully covered by an existing call-in entry — nothing new to add.");
       } else {
-        fragments.forEach(f => entries.push(makeStandbyFragment(f.start, f.end, longCall)));
+        fragments.forEach(f => entries.push(makeStandbyFragment(f.start, f.end)));
       }
     } else {
-      entries.push({ id: uid(), date, type, hours: parseFloat(hoursVal) || 0, diffMode, startTime, endTime, restViolation, mealSkipped, longCall });
+      entries.push({ id: uid(), date, type, hours: parseFloat(hoursVal) || 0, diffMode, startTime, endTime, restViolation, mealSkipped });
     }
     persistEntries();
     render();
