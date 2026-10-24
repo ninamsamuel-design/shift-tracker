@@ -79,6 +79,29 @@ console.log("\n09/13-09/26 (payroll mode)");
   check("Contract flags (count)", s.flags.length, 0);
 }
 
+console.log("\n09/27-10/10 (payroll mode)");
+{
+  const s = summary("2026-09-27", "2026-10-10"), p = s.period, w1 = s.weeks[0].cats, w2 = s.weeks[1].cats;
+  console.log("week 9/27-10/3");
+  check("Regular", w1.regular, 28.00);
+  check("OT-Straight", w1.otStraight, 1.50);
+  check("OT-Double", w1.otDouble, 1.25);
+  check("Sick Leave-Paid", w1.sick, 12.00);
+  check("Time On Call - 50%", w1.t50, 4.25);
+  check("Weekend diff", w1.weekendDiff, 4.25);
+  check("Time On Call", w1.onCallStandby, 30.50);
+  check("Week total", w1.payRounded, 4181.60, MONEY_TOL);
+  console.log("week 10/4-10/10");
+  check("Regular", w2.regular, 37.00);
+  check("Time On Call - 50%", w2.t50, 2.00);
+  check("Weekend diff", w2.weekendDiff, 2.00);
+  check("Time On Call", w2.onCallStandby, 33.00);
+  check("ESIP hours", w2.extraShift, 3.00);
+  check("ESIP lump sum $", Math.round((w2.codes.esip || 0) * 100) / 100, 356.54);
+  check("Week total", w2.payRounded, 4034.88, MONEY_TOL);
+  check("GROSS", p.payRounded, 8216.48, MONEY_TOL);
+}
+
 console.log("\nrule tests (synthetic entries)");
 {
   const base = run("JSON.stringify(settings)");
@@ -117,6 +140,30 @@ console.log("\nrule tests (synthetic entries)");
   t("weekend diff: Sat 02:28 start paid", wd("2026-10-10", "02:28", "04:28"));
   t("weekend diff: Sun 23:25 start (runs into Mon) paid", wd("2026-10-11", "23:25", "01:25"));
   t("weekend diff: Mon 05:38 start unpaid", !wd("2026-10-12", "05:38", "07:38"));
+
+  // 2-hour call-back minimum
+  ls = lines([E("c1", "2026-10-20", "callback", 1.75, "05:30", "07:15")]);
+  t("1.75h call-in is credited 2h, shown as actual -> credited", has(ls, "c1", "1.75h actual → 2h credited") && has(ls, "c1", "2h Time On Call – 50%"));
+  const cwk = weeks([E("c2", "2026-10-20", "callback", 1.75, "05:30", "07:15")]);
+  const c2 = cwk[0].entries[0];
+  t("credited hours also get weekend differential when in the window", (() => { const x = weeks([E("c3", "2026-10-17", "callback", 1.75, "10:00", "11:45")])[0].entries[0]; return x.result.lines.some(l => l.label.startsWith("2h weekend diff")) && x.result.credited.credited === 2 && x.result.credited.actual === 1.75; })());
+  ls = lines([E("c4", "2026-10-20", "callback", 1.25, "05:38", "07:00"), E("s4", "2026-10-20", "shift", 12, "07:00", "19:23")]);
+  t("a call-in rolling straight into the shift gets no top-up", ls.some(l => l.id === "c4" && l.label.startsWith("1.25h regular")) && !has(ls, "c4", "credited"));
+  const topUp = weeks([E("d1", "2026-10-21", "shift", 12, "07:00", "19:23"), E("d2", "2026-10-22", "callback", 1.5, "22:00", "23:30")]);
+  t("a top-up hour counts toward daily OT and the call-in workday rules (separate workday here)", topUp.flatMap(w => w.entries).find(e => e.id === "d2").result.credited.credited === 2);
+
+  // week assignment follows the workday
+  const wkSplit = weeks([E("w1", "2026-10-17", "callback", 2.25, "14:11", "16:24"), E("w2", "2026-10-18", "callback", 2, "05:30", "07:30")]);
+  t("a Sun call-in inside a Sat workday counts in Saturday's week", wkSplit.length === 1 && wkSplit[0].entries.length === 2 && wkSplit[0].start === "2026-10-11");
+
+  // ESIP: lump sum, not counted toward 40 / 12
+  ls = lines([E("e1", "2026-10-26", "shift", 12, "07:00", "19:23"), E("e2", "2026-10-27", "shift", 12, "07:00", "19:23"), E("e3", "2026-10-28", "shift", 12, "07:00", "19:23"), E("e4", "2026-10-29", "extra_shift", 8, "07:00", "15:30"), E("e5", "2026-10-30", "shift", 4, "07:00", "11:30")]);
+  t("ESIP hours don't push later shifts into weekly OT", !ls.some(l => l.id === "e5" && l.label.includes("OT-Straight")));
+  t("ESIP is one lump-sum line at 1.5x", ls.filter(l => l.id === "e4").length === 1 && has(ls, "e4", "8h ESIP lump sum @ 1.5x"));
+
+  // sick leave counts toward the 40 like holiday (and pays 1x)
+  ls = lines([E("k1", "2026-11-01", "sick", 8, "", ""), E("k2", "2026-11-02", "shift", 12, "07:00", "19:23"), E("k3", "2026-11-03", "shift", 12, "07:00", "19:23"), E("k4", "2026-11-04", "shift", 12, "07:00", "19:23"), E("k5", "2026-11-05", "shift", 12, "07:00", "19:23")]);
+  t("sick leave counts toward the weekly 40 (8 sick + 48 worked: 8h coded OT-Straight)", has(ls, "k5", "OT-Straight") && has(ls, "k1", "sick leave-paid"));
 
   run("entries = " + JSON.stringify([E("m", "2026-09-08", "shift", 12, "07:00", "19:23"), E("n", "2026-09-15", "shift", 12, "07:00", "19:23")]));
   const cw = JSON.parse(run("JSON.stringify(computeWeeks().map(w => [w.start, w.certPay]))"));
