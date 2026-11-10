@@ -250,6 +250,14 @@
     <p class="type-note" id="authStatus" style="margin-top:10px;"></p>
   </div>
 
+  <div id="conflictBanner" class="card" style="display:none; border-color:var(--amber); background:var(--amber-soft);">
+    <p class="type-note" id="conflictText" style="margin:0 0 10px; color:var(--amber-ink);"></p>
+    <div class="row-actions">
+      <button class="btn-primary" id="conflictLoadBtn">Load the latest data</button>
+      <button class="btn-ghost" id="conflictKeepBtn">Save this page's version anyway</button>
+    </div>
+  </div>
+
   <div id="saveStatus" style="font-size:12.5px; color:var(--amber); margin-bottom:14px;"></div>
 
   <div class="card">
@@ -786,12 +794,57 @@ const storageAdapter = {
   lastSaveFailed: false,
   lastCloudError: false,
   session: null,
+  // Stale-data safeguard. The app saves whole lists at once, so a copy of the
+  // app that loaded OLD data (a phone tab left open in the background, say)
+  // would silently overwrite everything newer the next time it saved. Each
+  // key remembers the server's updated_at from the last time THIS page loaded
+  // or wrote it (null = the row didn't exist), and a save only goes through
+  // if the server still has that exact version. Otherwise nothing is written
+  // and the person chooses what to do (see showConflictBanner).
+  versions: {},
+  conflict: null, // { key, value } of the save that was refused
+  async cloudWrite(key, value, force) {
+    const row = { user_id: this.session.user.id, key, value, updated_at: new Date().toISOString() };
+    const known = this.versions[key];
+    let res;
+    if (force || known === undefined || key === "savedWeeks") {
+      // savedWeeks is just which weeks are collapsed -- last write wins.
+      res = await supabaseClient.from("kv_store").upsert(row).select("updated_at");
+    } else if (known === null) {
+      res = await supabaseClient.from("kv_store").insert(row).select("updated_at");
+      if (res.error && res.error.code === "23505") return { conflict: true };
+    } else {
+      res = await supabaseClient.from("kv_store").update({ value, updated_at: row.updated_at })
+        .eq("user_id", row.user_id).eq("key", key).eq("updated_at", known).select("updated_at");
+      if (!res.error && (!res.data || res.data.length === 0)) return { conflict: true };
+    }
+    if (res.error) return { error: res.error };
+    const written = Array.isArray(res.data) ? res.data[0] : res.data;
+    if (written) this.versions[key] = written.updated_at;
+    return { ok: true };
+  },
+  // Called when the page comes back to the foreground: if another device has
+  // saved since this page loaded, pull the newer data in before it can be
+  // overwritten. Returns true if anything was reloaded.
+  async refreshIfStale() {
+    if (!supabaseClient || !this.session || this.conflict) return false;
+    try {
+      const { data, error } = await supabaseClient.from("kv_store").select("key,updated_at").in("key", ["entries", "settings"]);
+      if (error || !data) return false;
+      const stale = data.some(r => this.versions[r.key] !== undefined && this.versions[r.key] !== null && Date.parse(r.updated_at) !== Date.parse(this.versions[r.key]));
+      if (!stale) return false;
+      await loadDataFromStorage();
+      loadSettingsUI(); render(); renderExpectedSummary();
+      return true;
+    } catch (e) { return false; }
+  },
   async get(key) {
     if (supabaseClient && this.session) {
       try {
-        const { data, error } = await supabaseClient.from("kv_store").select("value").eq("key", key).maybeSingle();
+        const { data, error } = await supabaseClient.from("kv_store").select("value,updated_at").eq("key", key).maybeSingle();
         if (error) console.error("Supabase get(" + key + ") failed:", error);
         this.lastCloudError = !!error;
+        if (!error) this.versions[key] = data ? data.updated_at : null;
         updateSaveStatus();
         return (!error && data) ? { value: data.value } : null;
       } catch (e) { console.error("Supabase get(" + key + ") threw:", e); this.lastCloudError = true; updateSaveStatus(); return null; }
@@ -807,9 +860,17 @@ const storageAdapter = {
   async set(key, value) {
     if (supabaseClient && this.session) {
       try {
-        const { error } = await supabaseClient.from("kv_store").upsert({ user_id: this.session.user.id, key, value, updated_at: new Date().toISOString() });
-        if (error) console.error("Supabase set(" + key + ") failed:", error);
-        this.lastCloudError = !!error;
+        const r = await this.cloudWrite(key, value, false);
+        if (r.conflict) {
+          this.conflict = { key, value };
+          this.lastCloudError = false;
+          showConflictBanner();
+        } else if (r.error) {
+          console.error("Supabase set(" + key + ") failed:", r.error);
+          this.lastCloudError = true;
+        } else {
+          this.lastCloudError = false;
+        }
       } catch (e) { console.error("Supabase set(" + key + ") threw:", e); this.lastCloudError = true; }
       updateSaveStatus();
       return;
@@ -837,6 +898,30 @@ function updateSaveStatus() {
   el.textContent = storageAdapter.lastSaveFailed
     ? "⚠ This browser isn't saving data between visits — use Backup / Restore below so you don't lose your settings or entries."
     : "";
+}
+
+function showConflictBanner() {
+  const box = document.getElementById("conflictBanner");
+  if (!box) return;
+  const c = storageAdapter.conflict;
+  box.style.display = c ? "block" : "none";
+  if (c) document.getElementById("conflictText").textContent =
+    "Your " + (c.key === "entries" ? "entries were" : "settings were") + " changed somewhere else (another device or browser tab) after this page loaded, so your last change was NOT saved — saving it would have overwritten the newer data. Load the latest data and redo that change, or save this page's version anyway (that overwrites the other copy).";
+}
+async function resolveConflictLoadLatest() {
+  storageAdapter.conflict = null;
+  showConflictBanner();
+  await loadDataFromStorage();
+  loadSettingsUI(); render(); renderExpectedSummary();
+}
+async function resolveConflictOverwrite() {
+  const c = storageAdapter.conflict;
+  if (!c) return;
+  const r = await storageAdapter.cloudWrite(c.key, c.value, true);
+  storageAdapter.lastCloudError = !!r.error;
+  storageAdapter.conflict = null;
+  showConflictBanner();
+  updateSaveStatus();
 }
 
 function updateAuthUI() {
@@ -2372,6 +2457,11 @@ async function init() {
   try {
     await loadDataFromStorage();
   } catch (e) {}
+
+  document.getElementById("conflictLoadBtn").addEventListener("click", resolveConflictLoadLatest);
+  document.getElementById("conflictKeepBtn").addEventListener("click", resolveConflictOverwrite);
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") storageAdapter.refreshIfStale(); });
+  window.addEventListener("focus", () => { storageAdapter.refreshIfStale(); });
 
   document.getElementById("cancelAuthBtn").addEventListener("click", () => {
     document.getElementById("accountCard").style.display = "none";
