@@ -327,7 +327,7 @@
           </select>
           <input type="text" id="weekendDiffEndTime" inputmode="numeric" placeholder="HH:MM" maxlength="5">
         </div>
-        <p class="type-note" style="margin-top:6px; margin-bottom:0;">An entry counts if it STARTS between the start and end below, every week. Defaults to Fri 20:45 – Mon 00:00, which is what reproduces your real paystubs so far.</p>
+        <p class="type-note" style="margin-top:6px; margin-bottom:0;">An entry counts if it STARTS between the start and end below, every week. Defaults to Fri 19:00 – Mon 00:00. The Friday start fits your stubs (payroll retro-paid a Fri 20:00 call-back); the Monday end is inferred from one unpaid Mon 05:38 start, so check it against your contract.</p>
       </div>
       <div class="field" id="certPayField">
         <label for="certPay">Certification pay ($/week)</label>
@@ -373,6 +373,7 @@
           <option value="extra_shift">Extra shift (ESIP, 1.5x bonus)</option>
           <option value="holiday">Holiday pay</option>
           <option value="sick">Sick Leave-Paid</option>
+          <option value="vacation">Vacation Leave-Used</option>
           <option value="comp_used">Compensatory time used</option>
           <option value="callback">Called-in</option>
           <option value="callback_1hr">Call-back within 1 hr of clock-out</option>
@@ -481,12 +482,15 @@ const DEFAULT_SETTINGS = {
   // Certification lapsed: last paid for the week ending 2026-09-12. Weeks
   // starting after this date get no certification pay. Blank = never ends.
   certPayEndDate: "2026-09-12",
-  // Weekend differential window (RN). INFERRED from paystubs: payroll pays
-  // the differential on the WHOLE entry when the entry STARTS inside this
-  // window (not proportionally by clock time). Fri 20:45 -> Mon 00:00 is
-  // what reproduces every real paystub so far (a Fri 20:00 call-back unpaid,
-  // a Fri 20:45 call-back paid, a Mon 05:38 start unpaid).
-  weekendDiffStartDow: 5, weekendDiffStartTime: "20:45",
+  // Weekend differential window (RN). Payroll pays the differential on the
+  // WHOLE entry when the entry STARTS inside this window (not proportionally
+  // by clock time). Start corrected to Fri 19:00: the 10/11-10/24 stub
+  // retro-paid the Fri 9/4 20:00 call-back ("Weekend Day Shift Di",
+  // 08/30-09/05, 4.75h, $18.05), so payroll's earlier omission was an error
+  // and the window starts before 20:00. The Fri 16:00 training start stayed
+  // unpaid, which fits. The Monday END (00:00) is still INFERRED from one
+  // unpaid Mon 05:38 start -- check it against the contract.
+  weekendDiffStartDow: 5, weekendDiffStartTime: "19:00",
   weekendDiffEndDow: 1, weekendDiffEndTime: "00:00",
 };
 
@@ -533,6 +537,7 @@ const TYPE_INFO = {
   training: { label: "Education Time", note: "Paid at your regular rate and counted in Regular Pay (your supervisor codes it separately for unit purposes only). Pools into the same workday/weekly OT as a scheduled shift; no evening/night differential, but eligible for weekend differential." },
   extra_shift: { label: "Extra shift (ESIP, 1.5x bonus)", note: "Paid 1.5x on all hours as one lump sum (\"Lump Sum-No Retirement\"). Not part of Regular Pay, and it does not count toward the weekly 40 or daily 12 overtime thresholds (inferred from one ESIP shift)." },
   holiday: { label: "Holiday-Regular pay", note: "Paid at your regular rate and never itself overtime. Its hours DO count toward the 40-hour weekly threshold, but hours past 40 only pay the 1.5x premium once your actual worked hours exceed 40." },
+  vacation: { label: "Vacation Leave-Used", note: "Paid at your regular rate and never itself overtime. Treated like holiday and sick leave: its hours count toward the 40-hour weekly threshold (inferred -- not yet seen to matter on a stub), and hours past 40 only pay the 1.5x premium once your actual worked hours exceed 40." },
   sick: { label: "Sick Leave-Paid", note: "Paid at your regular rate and never itself overtime. Like holiday, its hours count toward the 40-hour weekly threshold, but hours past 40 only pay the 1.5x premium once your actual worked hours exceed 40." },
   comp_used: { label: "Compensatory time used", note: "Paid out at your regular rate for this period. Doesn't count toward OT accrual (it's paid leave, not worked time)." },
   callback: { label: "Called-in", note: "Every call-in is credited at least 2 hours (a call-in that rolls straight into your shift is one block with it); the credited top-up counts like worked time. Payroll mode (what shows on your paycheck): call-in hours pool into the same workday/weekly OT engine as a scheduled shift. If a workday BEGINS with a call-in from on-call, its non-overtime hours also get Time On Call – 50% (T50, inferred from one paystub); a call-back later in a workday that began with a scheduled shift gets no premium. Contract mode (verification only): your contract guarantees a 2-hour minimum at 1.5x, or actual hours at 1.5x, whichever is greater — except hours that already qualify for 2x under daily OT just pay 2x (no stacking). The Verify-against-paystub view flags any call-in hours where payroll mode paid less than contract mode would require." },
@@ -553,15 +558,16 @@ const TYPE_INFO = {
 // double-time -- reproduced exactly by this bundling logic.
 const WORKDAY_POOL_TYPES = new Set(["shift", "training", "callback"]);
 
-// Rule 5 (RN weekend differential), INFERRED from real paystubs rather than
+// Rule 5 (RN weekend differential), learned from real paystubs rather than
 // stated in the contract: payroll pays the differential on the WHOLE entry
-// when the entry STARTS inside the window (settings: default Fri 20:45 ->
+// when the entry STARTS inside the window (settings: default Fri 19:00 ->
 // Mon 00:00), and nothing otherwise -- NOT proportionally by clock time.
-// That's the only simple rule that reproduces every stub so far: a Fri 20:00
-// call-back (spanning into Saturday) unpaid, a Fri 20:45 call-back paid in
-// full, a Sat 02:28 call-in paid, a Sun call-in paid, a Mon 05:38 start
-// unpaid. Applies to training and call-ins too, automatically (not gated by
-// the manual differential dropdown, and not exclusive with evening/night).
+// Evidence: a Fri 20:00 call-back (spanning into Saturday) was first
+// omitted, then retro-paid in full; a Fri 16:00 training start was never
+// paid; Fri 20:45, Sat 02:28 and Sun call-ins paid in full; a Mon 05:38
+// start unpaid (the Monday end is the only part still inferred). Applies to
+// training and call-ins too, automatically (not gated by the manual
+// differential dropdown, and not exclusive with evening/night).
 const WEEKEND_DIFF_TYPES = new Set(["shift", "training", "callback", "callback_1hr", "extra_shift"]);
 
 function weekendWindowBoundsNear(dateStr) {
@@ -705,7 +711,7 @@ function computeWeeklyOTTiers(allEntries, workdayTiers) {
   // ESIP/extra_shift is deliberately NOT here: ESIP is a 1.5x lump sum that
   // does not count toward the weekly 40 or daily 12 thresholds (INFERRED from
   // one ESIP shift, Mon 10/5/2026 -- re-check on the next ESIP stub).
-  const relevant = allEntries.filter(e => WORKDAY_POOL_TYPES.has(e.type) || e.type === "holiday" || e.type === "sick");
+  const relevant = allEntries.filter(e => WORKDAY_POOL_TYPES.has(e.type) || e.type === "holiday" || e.type === "sick" || e.type === "vacation");
   const anchors = workdayAnchorMap(allEntries);
   const sorted = relevant.slice().sort((a, b) => {
     const d = a.date.localeCompare(b.date);
@@ -718,7 +724,7 @@ function computeWeeklyOTTiers(allEntries, workdayTiers) {
     if (!running[wk]) running[wk] = { all: 0, worked: 0 };
     const r = running[wk];
     // Paid holiday and paid sick leave count toward the 40 but are never OT.
-    if (e.type === "holiday" || e.type === "sick") { r.all += e.hours; return; }
+    if (e.type === "holiday" || e.type === "sick" || e.type === "vacation") { r.all += e.hours; return; }
     const contributed = workdayTiers.get(e.id).dailyTierHours;
     const weeklyOTHours = Math.max(0, Math.min(contributed, r.all + contributed - 40));
     const weeklyOT15Hours = Math.max(0, Math.min(weeklyOTHours, r.worked + contributed - 40));
@@ -1337,11 +1343,11 @@ function computeEntryBase(entry, ctx) {
     ] });
   }
 
-  if (entry.type === "holiday" || entry.type === "comp_used" || entry.type === "sick") {
+  if (entry.type === "holiday" || entry.type === "comp_used" || entry.type === "sick" || entry.type === "vacation") {
     // Paid leave at 1x, never itself overtime. Holiday and sick leave count
     // toward the weekly 40 (see computeWeeklyOTTiers); comp time does not.
     const pay = entry.hours * rate;
-    const labelMap = { holiday: "h holiday-regular pay", comp_used: "h comp time used", sick: "h sick leave-paid" };
+    const labelMap = { holiday: "h holiday-regular pay", comp_used: "h comp time used", sick: "h sick leave-paid", vacation: "h vacation leave-used" };
     return addDiff({ pay, regularHoursAdded: 0, lines: [{ tag: "reg", label: entry.hours + labelMap[entry.type], amt: pay }] });
   }
 
@@ -1685,7 +1691,7 @@ function blankCats() {
   return {
     regular: 0, weeklyOT: 0, restOT: 0, dailyDT: 0, recallDT: 0,
     onCallStandby: 0, callInPremium: 0,
-    holiday: 0, sick: 0, compUsed: 0, extraShift: 0,
+    holiday: 0, sick: 0, vacation: 0, compUsed: 0, extraShift: 0,
     eveningDiff: 0, nightDiff: 0, weekendDiff: 0, shiftDiff: 0,
     otStraight: 0, otDouble: 0, t50: 0, certPay: 0, pay: 0,
     // dollars per pay code, rounded to cents per code the way the paystub
@@ -1701,6 +1707,7 @@ function payCodeFor(e, l) {
   if (e.type === "oncall") return "toc";
   if (e.type === "holiday") return "holiday";
   if (e.type === "sick") return "sick";
+  if (e.type === "vacation") return "vacation";
   if (e.type === "comp_used") return "comp";
   if (e.type === "extra_shift") return "esip";
   if (e.type === "callback_cancelled") return "callback_cancelled";
@@ -1739,6 +1746,7 @@ function tallyEntryIntoCats(cats, e, tech) {
   if (e.type === "oncall") { cats.onCallStandby += e.hours; return; }
   if (e.type === "holiday") { cats.holiday += e.hours; return; }
   if (e.type === "sick") { cats.sick += e.hours; return; }
+  if (e.type === "vacation") { cats.vacation += e.hours; return; }
   if (e.type === "comp_used") { cats.compUsed += e.hours; return; }
   if (e.type === "extra_shift") { cats.extraShift += e.hours; return; }
   if (e.type === "callback_1hr") { cats.recallDT += e.hours; return; }
@@ -2131,7 +2139,7 @@ function updateTypeUI() {
       endInput.value = "19:23";
       autoCalcHours();
     } else if (!hoursInput.value) {
-      hoursInput.value = (type === "oncall") ? "8" : (type === "training" ? "4" : ((type === "holiday" || type === "comp_used" || type === "sick") ? "8" : "12"));
+      hoursInput.value = (type === "oncall") ? "8" : (type === "training" ? "4" : ((type === "holiday" || type === "comp_used" || type === "sick" || type === "vacation") ? "8" : "12"));
     }
   }
   diffField.style.display = (type === "oncall" || type === "comp_used" || type === "training") ? "none" : "block";
@@ -2266,7 +2274,7 @@ function summaryRows(cats, tech) {
       ["Regular", cats.regular], ["OT (1.5x)", cats.weeklyOT], ["OTS – Rest Between Shifts", cats.restOT],
       ["Daily double time (2x)", cats.dailyDT], ["Recall double time (2x)", cats.recallDT],
       ["On-call standby", cats.onCallStandby], ["Call-in (1.5x)", cats.callInPremium],
-      ["Holiday", cats.holiday], ["Sick Leave-Paid", cats.sick],
+      ["Holiday", cats.holiday], ["Sick Leave-Paid", cats.sick], ["Vacation Leave-Used", cats.vacation],
       ["ESIP (Lump Sum-No Retirement)", cats.extraShift], ["Comp time used", cats.compUsed],
       ["Shift diff", cats.shiftDiff],
     ];
@@ -2275,7 +2283,7 @@ function summaryRows(cats, tech) {
     ["Regular Pay (incl. education time)", cats.regular],
     ["Overtime Pay-Straight", cats.otStraight], ["Overtime Pay-Double", cats.otDouble],
     ["OTS – Rest Between Shifts", cats.restOT], ["Recall double time (2x)", cats.recallDT],
-    ["Holiday-Regular", cats.holiday], ["Sick Leave-Paid", cats.sick], ["Time On Call", cats.onCallStandby],
+    ["Holiday-Regular", cats.holiday], ["Sick Leave-Paid", cats.sick], ["Vacation Leave-Used", cats.vacation], ["Time On Call", cats.onCallStandby],
     ["Time On Call - 50% (T50, inferred)", cats.t50],
     ["Evening diff", cats.eveningDiff], ["Night diff", cats.nightDiff],
     ["Weekend Differential", cats.weekendDiff],

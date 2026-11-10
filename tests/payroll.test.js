@@ -23,10 +23,9 @@ if (process.argv[2]) run("settings.baseRate = " + parseFloat(process.argv[2]));
 run("entries = " + JSON.stringify(fixture.entries));
 
 let failures = 0, checks = 0;
-// Hours must match exactly. Dollars are allowed $0.02: the paystub rounds per
-// pay code at a rate with more decimals than the $79.23 in settings (79.2303
-// reproduces both gross totals exactly), so a cent or two of drift is
-// expected at $79.23.
+// Hours must match exactly. Dollars are allowed $0.02: the paystub rate is
+// exactly $79.23 and it rounds per pay code, but the expected weekly totals
+// below were summed by hand and can be a cent or two off.
 const MONEY_TOL = 0.02;
 function check(label, actual, expected, tol) {
   checks++;
@@ -49,11 +48,11 @@ console.log("08/30-09/12 (payroll mode)");
   check("Holiday", p.holiday, 8.00);
   check("Time On Call", p.onCallStandby, 59.50);
   check("Time On Call - 50%", p.t50, 0);
-  check("Weekend diff", p.weekendDiff, 6.25);
+  check("Weekend diff (incl. 4.75h retro on the 9/4 call-back)", p.weekendDiff, 11.00);
   check("Certification $", p.certPay, 41.54);
-  check("Week 1 pay", s.weeks[0].cats.payRounded, 4257.18, MONEY_TOL);
+  check("Week 1 pay (original 4257.18 + 18.05 retro)", s.weeks[0].cats.payRounded, 4275.23, MONEY_TOL);
   check("Week 2 pay", s.weeks[1].cats.payRounded, 4742.87, MONEY_TOL);
-  check("GROSS", p.payRounded, 9000.05, MONEY_TOL);
+  check("GROSS (original 9000.05 + 18.05 retro)", p.payRounded, 9018.10, MONEY_TOL);
   check("Contract flags: hours", s.flags.reduce((t, f) => t + f.hours, 0), 1.25);
   check("Contract flags: dollars", s.flags.reduce((t, f) => t + f.delta, 0), 49.52);
 }
@@ -135,7 +134,8 @@ console.log("\nrule tests (synthetic entries)");
   t("no rest premium when a call-in rolls straight into the shift (no clock-out)", !ls.some(l => l.label.includes("Rest Between Shifts")));
 
   const wd = (date, start, end) => has(lines([E("w", date, "callback", 2, start, end)]), "w", "weekend diff");
-  t("weekend diff: Fri 20:00 start unpaid", !wd("2026-10-09", "20:00", "22:00"));
+  t("weekend diff: Fri 20:00 start paid (payroll retro-paid this one)", wd("2026-10-09", "20:00", "22:00"));
+  t("weekend diff: Fri 18:00 start unpaid", !wd("2026-10-09", "18:00", "20:00"));
   t("weekend diff: Fri 20:45 start paid", wd("2026-10-09", "20:45", "22:45"));
   t("weekend diff: Sat 02:28 start paid", wd("2026-10-10", "02:28", "04:28"));
   t("weekend diff: Sun 23:25 start (runs into Mon) paid", wd("2026-10-11", "23:25", "01:25"));
@@ -160,6 +160,10 @@ console.log("\nrule tests (synthetic entries)");
   ls = lines([E("e1", "2026-10-26", "shift", 12, "07:00", "19:23"), E("e2", "2026-10-27", "shift", 12, "07:00", "19:23"), E("e3", "2026-10-28", "shift", 12, "07:00", "19:23"), E("e4", "2026-10-29", "extra_shift", 8, "07:00", "15:30"), E("e5", "2026-10-30", "shift", 4, "07:00", "11:30")]);
   t("ESIP hours don't push later shifts into weekly OT", !ls.some(l => l.id === "e5" && l.label.includes("OT-Straight")));
   t("ESIP is one lump-sum line at 1.5x", ls.filter(l => l.id === "e4").length === 1 && has(ls, "e4", "8h ESIP lump sum @ 1.5x"));
+
+  // vacation leave behaves like holiday/sick
+  ls = lines([E("v1", "2026-11-08", "vacation", 8, "", ""), E("v2", "2026-11-09", "shift", 12, "07:00", "19:23"), E("v3", "2026-11-10", "shift", 12, "07:00", "19:23"), E("v4", "2026-11-11", "shift", 12, "07:00", "19:23"), E("v5", "2026-11-12", "shift", 12, "07:00", "19:23")]);
+  t("vacation leave pays 1x and counts toward the weekly 40", has(ls, "v1", "vacation leave-used") && has(ls, "v5", "OT-Straight"));
 
   // sick leave counts toward the 40 like holiday (and pays 1x)
   ls = lines([E("k1", "2026-11-01", "sick", 8, "", ""), E("k2", "2026-11-02", "shift", 12, "07:00", "19:23"), E("k3", "2026-11-03", "shift", 12, "07:00", "19:23"), E("k4", "2026-11-04", "shift", 12, "07:00", "19:23"), E("k5", "2026-11-05", "shift", 12, "07:00", "19:23")]);
